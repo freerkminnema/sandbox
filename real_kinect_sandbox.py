@@ -282,9 +282,10 @@ def calibrate_kinect():
                     # Draw rectangle around calibration region
                     cv2.rectangle(colored, (x1, y1), (x2, y2), (255, 255, 0), 3)
                     
-                    # Calculate current depth in calibration region
-                    center_region = depth[y1:y2, x1:x2]
-                    current_depth = center_region.mean()
+                    # Calculate current depth at absolute center point
+                    center_x = width // 2
+                    center_y = height // 2
+                    current_depth = depth[center_y, center_x]
                     current_depth_8bit = cv2.convertScaleAbs(np.array([[current_depth]]), alpha=255/2047)[0,0]
                     
                     # Show calibration info
@@ -295,19 +296,23 @@ def calibrate_kinect():
                     cv2.putText(colored, f"Threshold: {temp_thresholds[step_idx]}", (10, 90), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
-                    # Show depth value next to calibration square
-                    cv2.putText(colored, f"{current_depth_8bit}", (x2 + 10, center_y), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                    # Draw crosshair at absolute center point
+                    cv2.drawMarker(colored, (center_x, center_y), (255, 0, 255), cv2.MARKER_CROSS, 20, 3)
+                    
+                    # Show depth value at center point
+                    cv2.putText(colored, f"{current_depth_8bit}", (center_x + 25, center_y), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
                     
                     cv2.imshow(f'Calibration Step {step_idx + 1}: {boundary_name}', colored)
                     
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('c'):
-                        # Capture center region depth
-                        center_region = depth[y1:y2, x1:x2]
-                        avg_depth = center_region.mean()
-                        captured_depths.append(avg_depth)
-                        print(f"✅ Captured center region: {avg_depth:.1f} (raw Kinect depth)")
+                        # Capture absolute center point depth
+                        center_x = width // 2
+                        center_y = height // 2
+                        center_depth = depth[center_y, center_x]
+                        captured_depths.append(center_depth)
+                        print(f"✅ Captured center point: {center_depth:.1f} (raw Kinect depth)")
                         captured = True
                     elif key == ord('q'):
                         print("❌ Calibration cancelled")
