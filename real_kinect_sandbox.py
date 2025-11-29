@@ -525,10 +525,20 @@ def calibrate_projection_alignment():
     selected_corner = 0
     
     while True:
-        # Create display image - start fresh from pattern each frame
-        display = pattern.copy()
+        # Get live depth data for background
+        depth_data_live = get_kinect_depth()
+        if depth_data_live is not None:
+            # Create color visualization from live sensor data
+            colored_live = create_elevation_colors(depth_data_live)
+            # Resize to display resolution
+            colored_live = cv2.resize(colored_live, (display_width, display_height))
+            # Use live sensor data as background (slightly dimmed for better visibility of overlay)
+            display = cv2.addWeighted(colored_live, 0.6, pattern, 0.4, 0)
+        else:
+            # Fallback to pattern only if no sensor data
+            display = pattern.copy()
         
-        # Draw corner markers on the FULL screen pattern
+        # Draw corner markers on top of the live sensor view
         for i, corner in enumerate(working_corners):
             color = corner_colors[i]
             label = corner_labels[i]
@@ -545,7 +555,7 @@ def calibrate_projection_alignment():
             next_i = (i + 1) % 4
             cv2.line(display, tuple(corner), tuple(working_corners[next_i]), color, 2)
         
-        # Add on-screen instructions
+        # Add on-screen instructions with semi-transparent background for better readability
         # Main instruction
         cv2.putText(display, "PROJECTION ALIGNMENT", 
                    (display_width // 2 - 150, 40),
