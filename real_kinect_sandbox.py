@@ -26,6 +26,7 @@ GREEN_BLUE_THRESHOLD = 1200   # Middle to far boundary
 
 # Sandbox calibration variables
 sandbox_corners = None  # Will store 4 corner points: [top-left, top-right, bottom-right, bottom-left]
+projector_corners = None # Will store 4 corner points in projector coordinates
 sandbox_rotation = 0    # Current rotation: 0, 90, 180, 270 degrees
 mirror_flip = False     # Vertical flip for mirror-based projection
 sandbox_mask = None     # Pre-computed mask for sandbox area
@@ -75,7 +76,7 @@ def detect_display_resolution():
 
 def load_calibration():
     """Load calibration settings from file"""
-    global sandbox_corners, sandbox_rotation, mirror_flip, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD, display_width, display_height
+    global sandbox_corners, projector_corners, sandbox_rotation, mirror_flip, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD, display_width, display_height
     
     if os.path.exists(calibration_file):
         try:
@@ -88,6 +89,12 @@ def load_calibration():
             else:
                 sandbox_corners = None
                 
+            proj_corners = calib.get('projector_corners', None)
+            if proj_corners is not None:
+                projector_corners = [(int(x), int(y)) for x, y in proj_corners]
+            else:
+                projector_corners = None
+                
             sandbox_rotation = int(calib.get('rotation', 0))
             mirror_flip = bool(calib.get('mirror_flip', False))
             
@@ -99,6 +106,8 @@ def load_calibration():
             print(f"✅ Calibration loaded from {calibration_file}")
             if sandbox_corners is not None:
                 print(f"   Sandbox corners: {sandbox_corners}")
+            if projector_corners is not None:
+                print(f"   Projector corners: {projector_corners}")
                 print(f"   Rotation: {sandbox_rotation}°")
                 print(f"   Mirror flip: {'enabled' if mirror_flip else 'disabled'}")
             print(f"   Depth thresholds: W→B:{WHITE_BROWN_THRESHOLD}, B→G:{BROWN_GREEN_THRESHOLD}, G→L:{GREEN_BLUE_THRESHOLD}")
@@ -112,7 +121,7 @@ def load_calibration():
 
 def save_calibration():
     """Save current calibration settings to file"""
-    global sandbox_corners, sandbox_rotation, mirror_flip, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
+    global sandbox_corners, projector_corners, sandbox_rotation, mirror_flip, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
     
     # Convert numpy types to regular Python types for JSON serialization
     corners_to_save = None
@@ -121,6 +130,7 @@ def save_calibration():
     
     calib = {
         'sandbox_corners': corners_to_save,
+        'projector_corners': [[int(x), int(y)] for x, y in projector_corners] if projector_corners is not None else None,
         'rotation': int(sandbox_rotation),
         'mirror_flip': bool(mirror_flip),
         'depth_thresholds': {
@@ -271,45 +281,52 @@ def create_sandbox_mask(corners, image_size):
     return mask
 
 def apply_sandbox_transformation(image):
-    """Apply sandbox calibration transformation to image"""
-    global sandbox_corners, sandbox_rotation, mirror_flip, sandbox_mask
+    """Apply sandbox calibration transformation to image with perspective warping"""
+    global sandbox_corners, projector_corners, sandbox_rotation, mirror_flip, sandbox_mask
     
     if sandbox_corners is None:
         return image
     
+    # Get image dimensions
+    height, width = image.shape[:2]
+    
+    # Define source points (the four corners in the Kinect's view)
+    # These are the corners of the sandbox as seen by the Kinect
+    src_points = np.float32(sandbox_corners)
+    
+    # Define destination points (where these corners should map to in the projection)
+    if projector_corners is not None:
+        dst_points = np.float32(projector_corners)
+    else:
+        # Default: Map to the full display area
+        dst_points = np.float32([
+            [0, 0],                    # Top-left
+            [display_width - 1, 0],            # Top-right
+            [display_width - 1, display_height - 1],   # Bottom-right
+            [0, display_height - 1]            # Bottom-left
+        ])
+    
+    # Calculate perspective transformation matrix (homography)
+    perspective_matrix = cv2.getPerspectiveTransform(src_points, dst_points)
+    
+    # Apply perspective warp to align Kinect view with projector view
+    # Output size is set to display resolution
+    warped = cv2.warpPerspective(image, perspective_matrix, (display_width, display_height))
+    
     # Apply mirror flip if needed (for mirror-based projection)
     if mirror_flip:
-        image = cv2.flip(image, 0)  # Flip vertically (0 = vertical, 1 = horizontal)
+        warped = cv2.flip(warped, 0)  # Flip vertically (0 = vertical, 1 = horizontal)
     
     # Apply rotation if needed
     if sandbox_rotation != 0:
         if sandbox_rotation == 90:
-            image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+            warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
         elif sandbox_rotation == 180:
-            image = cv2.rotate(image, cv2.ROTATE_180)
+            warped = cv2.rotate(warped, cv2.ROTATE_180)
         elif sandbox_rotation == 270:
-            image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            warped = cv2.rotate(warped, cv2.ROTATE_90_COUNTERCLOCKWISE)
     
-    # Create or use existing mask
-    if sandbox_mask is None:
-        create_sandbox_mask(sandbox_corners, image.shape)
-    
-    # Apply mask - set everything outside sandbox to black
-    if sandbox_mask is not None:
-        # Resize mask to match image if needed
-        if sandbox_mask.shape[:2] != image.shape[:2]:
-            sandbox_mask_resized = cv2.resize(sandbox_mask, (image.shape[1], image.shape[0]))
-        else:
-            sandbox_mask_resized = sandbox_mask
-        
-        # Create 3-channel mask for color image
-        if len(image.shape) == 3:
-            mask_3d = cv2.cvtColor(sandbox_mask_resized, cv2.COLOR_GRAY2BGR)
-            image = cv2.bitwise_and(image, mask_3d)
-        else:
-            image = cv2.bitwise_and(image, sandbox_mask_resized)
-    
-    return image
+    return warped
 
 def calibrate_sandbox():
     """Interactive sandbox dimension calibration"""
@@ -478,65 +495,57 @@ def create_alignment_pattern(width, height):
 
 def calibrate_projection_alignment():
     """Calibrate projection to align with physical sandbox"""
-    global sandbox_corners
+    global sandbox_corners, projector_corners
     
     print("🎯 Projection Alignment Calibration")
     print("This ensures your projected overlay matches the physical sandbox")
     print("\nInstructions:")
-    print("1. Project this calibration pattern onto your sandbox")
-    print("2. Adjust until corner markers align with your sandbox corners")
+    print("1. Move the corner markers until they align with your PHYSICAL sandbox corners")
+    print("2. The live sensor view will warp in real-time to follow")
     print("3. Use arrow keys to fine-tune each corner")
     print("4. Press TAB to switch between corners")
     print("5. Press ENTER when satisfied with alignment")
-    print("\nControls:")
-    print("  Arrow Keys: Move selected corner")
-    print("  TAB: Next corner")
-    print("  SHIFT+TAB: Previous corner")
-    print("  ENTER: Confirm alignment")
-    print("  ESC: Cancel")
     
     if sandbox_corners is None:
         print("❌ No sandbox corners defined. Please calibrate sandbox dimensions first.")
         return False
     
-    # Get depth data to know the original resolution for scaling
-    depth_data = get_kinect_depth()
-    if depth_data is None:
-        print("❌ Cannot get depth data for alignment")
-        return False
-    
-    # Create calibration pattern at DISPLAY resolution (not depth resolution)
-    # This ensures the full screen is used for projection alignment
-    pattern = create_alignment_pattern(display_width, display_height)
-    
-    # Add corner markers
+    # Initialize working corners from existing projector_corners or default to full screen
+    if projector_corners is not None:
+        working_corners = [list(c) for c in projector_corners]
+    else:
+        working_corners = [
+            [0, 0],
+            [display_width - 1, 0],
+            [display_width - 1, display_height - 1],
+            [0, display_height - 1]
+        ]
+        
     corner_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]  # Red, Green, Blue, Yellow
     corner_labels = ["TL", "TR", "BR", "BL"]
-    
-    # Working copy of corners - scale from depth resolution to display resolution
-    depth_height, depth_width = depth_data.shape
-    scale_x = display_width / depth_width
-    scale_y = display_height / depth_height
-    
-    working_corners = [
-        [int(corner[0] * scale_x), int(corner[1] * scale_y)] 
-        for corner in sandbox_corners
-    ]
     selected_corner = 0
     
     while True:
         # Get live depth data for background
         depth_data_live = get_kinect_depth()
+        
         if depth_data_live is not None:
-            # Create color visualization from live sensor data
+            # Create color visualization from live sensor data (Depth Resolution)
             colored_live = create_elevation_colors(depth_data_live)
-            # Resize to display resolution
-            colored_live = cv2.resize(colored_live, (display_width, display_height))
-            # Use live sensor data as background (slightly dimmed for better visibility of overlay)
-            display = cv2.addWeighted(colored_live, 0.6, pattern, 0.4, 0)
+            
+            # Warp it to the current working_corners (Display Resolution)
+            src_points = np.float32(sandbox_corners)
+            dst_points = np.float32(working_corners)
+            
+            try:
+                perspective_matrix = cv2.getPerspectiveTransform(src_points, dst_points)
+                warped_live = cv2.warpPerspective(colored_live, perspective_matrix, (display_width, display_height))
+                display = warped_live
+            except Exception as e:
+                print(f"Warp error: {e}")
+                display = np.zeros((display_height, display_width, 3), dtype=np.uint8)
         else:
-            # Fallback to pattern only if no sensor data
-            display = pattern.copy()
+            display = np.zeros((display_height, display_width, 3), dtype=np.uint8)
         
         # Draw corner markers on top of the live sensor view
         for i, corner in enumerate(working_corners):
@@ -584,49 +593,33 @@ def calibrate_projection_alignment():
                    (10, display_height - 40),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
-        # DO NOT apply sandbox transformation during projection alignment!
-        # We need to see the FULL screen to align the projector properly
-        # The pattern is already at display resolution, so just show it directly
         cv2.imshow('AR Sandbox - Contour Lines', display)
         
         # Get full key code (not masked) for special keys
         key_full = cv2.waitKey(1)
         key = key_full & 0xFF
         
-        # Debug: print key codes to help troubleshoot
-        if key != 255:  # 255 means no key pressed
-            print(f"Key pressed - Full: {key_full}, Masked: {key}")
-        
         if key == 27:  # ESC
             print("❌ Projection alignment cancelled")
             return False
         elif key == 13:  # ENTER
-            # Scale corners back to original depth resolution and save
-            sandbox_corners = [
-                (int(corner[0] / scale_x), int(corner[1] / scale_y)) 
-                for corner in working_corners
-            ]
-            print(f"✅ Projection alignment saved: {sandbox_corners}")
+            # Save corners
+            projector_corners = [tuple(c) for c in working_corners]
+            print(f"✅ Projection alignment saved: {projector_corners}")
             return True
         elif key == 9:  # TAB
             selected_corner = (selected_corner + 1) % 4
-            print(f"📍 Selected corner: {corner_labels[selected_corner]}")
         elif key == 256 + 9:  # SHIFT+TAB (approximate)
             selected_corner = (selected_corner - 1) % 4
-            print(f"📍 Selected corner: {corner_labels[selected_corner]}")
         # Arrow keys - handle both masked and full key codes for cross-platform support
-        elif key == 82 or key_full == 65362 or key_full == 2490368 or key == 0:  # UP arrow (various platforms)
+        elif key == 82 or key_full == 65362 or key_full == 2490368 or key == 0:  # UP arrow
             working_corners[selected_corner][1] = max(0, working_corners[selected_corner][1] - 5)
-            print(f"↑ Moved {corner_labels[selected_corner]} up to {working_corners[selected_corner]}")
         elif key == 84 or key_full == 65364 or key_full == 2621440 or key == 1:  # DOWN arrow
             working_corners[selected_corner][1] = min(display_height, working_corners[selected_corner][1] + 5)
-            print(f"↓ Moved {corner_labels[selected_corner]} down to {working_corners[selected_corner]}")
         elif key == 81 or key_full == 65361 or key_full == 2424832 or key == 2:  # LEFT arrow
             working_corners[selected_corner][0] = max(0, working_corners[selected_corner][0] - 5)
-            print(f"← Moved {corner_labels[selected_corner]} left to {working_corners[selected_corner]}")
         elif key == 83 or key_full == 65363 or key_full == 2555904 or key == 3:  # RIGHT arrow
             working_corners[selected_corner][0] = min(display_width, working_corners[selected_corner][0] + 5)
-            print(f"→ Moved {corner_labels[selected_corner]} right to {working_corners[selected_corner]}")
     
     return False
 
