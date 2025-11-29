@@ -491,23 +491,24 @@ def calibrate_projection_alignment():
         print("❌ No sandbox corners defined. Please calibrate sandbox dimensions first.")
         return False
     
-    # Create calibration pattern
+    # Get depth data to know the original resolution for scaling
     depth_data = get_kinect_depth()
     if depth_data is None:
         print("❌ Cannot get depth data for alignment")
         return False
     
-    height, width = depth_data.shape
-    pattern = create_alignment_pattern(width, height)
+    # Create calibration pattern at DISPLAY resolution (not depth resolution)
+    # This ensures the full screen is used for projection alignment
+    pattern = create_alignment_pattern(display_width, display_height)
     
     # Add corner markers
     corner_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]  # Red, Green, Blue, Yellow
     corner_labels = ["TL", "TR", "BR", "BL"]
     
-    # Working copy of corners - scale to display resolution
-    height, width = depth_data.shape
-    scale_x = display_width / width
-    scale_y = display_height / height
+    # Working copy of corners - scale from depth resolution to display resolution
+    depth_height, depth_width = depth_data.shape
+    scale_x = display_width / depth_width
+    scale_y = display_height / depth_height
     
     working_corners = [
         [int(corner[0] * scale_x), int(corner[1] * scale_y)] 
@@ -515,13 +516,11 @@ def calibrate_projection_alignment():
     ]
     selected_corner = 0
     
-
-    
     while True:
-        # Create display image
+        # Create display image - start fresh from pattern each frame
         display = pattern.copy()
         
-        # Draw corner markers
+        # Draw corner markers on the FULL screen pattern
         for i, corner in enumerate(working_corners):
             color = corner_colors[i]
             label = corner_labels[i]
@@ -567,10 +566,9 @@ def calibrate_projection_alignment():
                    (10, display_height - 40),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
-        # Apply sandbox transformation for preview
-        display = apply_sandbox_transformation(display)
-        display = cv2.resize(display, (display_width, display_height))
-        
+        # DO NOT apply sandbox transformation during projection alignment!
+        # We need to see the FULL screen to align the projector properly
+        # The pattern is already at display resolution, so just show it directly
         cv2.imshow('AR Sandbox - Contour Lines', display)
         
         key = cv2.waitKey(1) & 0xFF
