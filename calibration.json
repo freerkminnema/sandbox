@@ -1,0 +1,14 @@
+{
+  "sandbox_corners": [
+    [100, 100],
+    [500, 100],
+    [500, 400],
+    [100, 400]
+  ],
+  "rotation": 270,
+  "depth_thresholds": {
+    "white_brown": 808,
+    "brown_green": 808,
+    "green_blue": 808
+  }
+}
