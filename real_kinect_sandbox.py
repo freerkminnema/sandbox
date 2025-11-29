@@ -326,8 +326,6 @@ def calibrate_sandbox():
         "Click BOTTOM-LEFT corner"
     ]
     
-    cv2.namedWindow('Sandbox Calibration', cv2.WINDOW_NORMAL)
-    
     while True:
         # Create copy for drawing
         display = colored.copy()
@@ -385,7 +383,7 @@ def calibrate_sandbox():
                 next_i = (i + 1) % len(corners)
                 cv2.line(display, corners[i], corners[next_i], (0, 255, 0), 2)
         
-        cv2.imshow('Sandbox Calibration', display)
+        cv2.imshow('AR Sandbox - Contour Lines', display)
         
         key = cv2.waitKey(1) & 0xFF
         
@@ -399,7 +397,6 @@ def calibrate_sandbox():
         
         if key == 27:  # ESC
             print("❌ Calibration cancelled")
-            cv2.destroyAllWindows()
             return False
         elif key == ord('c'):  # Clear
             corners = []
@@ -407,8 +404,8 @@ def calibrate_sandbox():
         elif key == 13 and len(corners) == 4:  # Enter
             # Scale corners back to original image size
             height, width = depth_data.shape
-            scale_x = width / 800
-            scale_y = height / 600
+            scale_x = width / display_width
+            scale_y = height / display_height
             
             sandbox_corners = [
                 (int(corners[0][0] * scale_x), int(corners[0][1] * scale_y)),  # Top-left
@@ -418,7 +415,6 @@ def calibrate_sandbox():
             ]
             
             print(f"✅ Sandbox corners calibrated: {sandbox_corners}")
-            cv2.destroyAllWindows()
             return True
     
     cv2.destroyAllWindows()
@@ -507,11 +503,18 @@ def calibrate_projection_alignment():
     corner_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]  # Red, Green, Blue, Yellow
     corner_labels = ["TL", "TR", "BR", "BL"]
     
-    # Working copy of corners
-    working_corners = [list(corner) for corner in sandbox_corners]
+    # Working copy of corners - scale to display resolution
+    height, width = depth_data.shape
+    scale_x = display_width / width
+    scale_y = display_height / height
+    
+    working_corners = [
+        [int(corner[0] * scale_x), int(corner[1] * scale_y)] 
+        for corner in sandbox_corners
+    ]
     selected_corner = 0
     
-    cv2.namedWindow('Projection Alignment', cv2.WINDOW_NORMAL)
+
     
     while True:
         # Create display image
@@ -567,19 +570,20 @@ def calibrate_projection_alignment():
         display = apply_sandbox_transformation(display)
         display = cv2.resize(display, (display_width, display_height))
         
-        cv2.imshow('Projection Alignment', display)
+        cv2.imshow('AR Sandbox - Contour Lines', display)
         
         key = cv2.waitKey(1) & 0xFF
         
         if key == 27:  # ESC
             print("❌ Projection alignment cancelled")
-            cv2.destroyAllWindows()
             return False
         elif key == 13:  # ENTER
-            # Save the aligned corners
-            sandbox_corners = [(int(corner[0]), int(corner[1])) for corner in working_corners]
+            # Scale corners back to original depth resolution and save
+            sandbox_corners = [
+                (int(corner[0] / scale_x), int(corner[1] / scale_y)) 
+                for corner in working_corners
+            ]
             print(f"✅ Projection alignment saved: {sandbox_corners}")
-            cv2.destroyAllWindows()
             return True
         elif key == 9:  # TAB
             selected_corner = (selected_corner + 1) % 4
@@ -590,13 +594,12 @@ def calibrate_projection_alignment():
         elif key == 82:  # UP arrow
             working_corners[selected_corner][1] = max(0, working_corners[selected_corner][1] - 5)
         elif key == 84:  # DOWN arrow
-            working_corners[selected_corner][1] = min(height, working_corners[selected_corner][1] + 5)
+            working_corners[selected_corner][1] = min(display_height, working_corners[selected_corner][1] + 5)
         elif key == 81:  # LEFT arrow
             working_corners[selected_corner][0] = max(0, working_corners[selected_corner][0] - 5)
         elif key == 83:  # RIGHT arrow
-            working_corners[selected_corner][0] = min(width, working_corners[selected_corner][0] + 5)
+            working_corners[selected_corner][0] = min(display_width, working_corners[selected_corner][0] + 5)
     
-    cv2.destroyAllWindows()
     return False
 
 
@@ -630,9 +633,8 @@ def run_unified_calibration():
                (display_width // 2 - 120, display_height // 2 + 120),
                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
     
-    cv2.imshow('Calibration', start_screen)
+    cv2.imshow('AR Sandbox - Contour Lines', start_screen)
     cv2.waitKey(0)
-    cv2.destroyAllWindows()
     
     # Step 1: Sandbox dimension calibration
     if not calibrate_sandbox():
@@ -663,9 +665,8 @@ def run_unified_calibration():
                (display_width // 2 - 140, display_height // 2 + 100),
                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200, 200, 200), 2)
     
-    cv2.imshow('Calibration', complete_screen)
+    cv2.imshow('AR Sandbox - Contour Lines', complete_screen)
     cv2.waitKey(0)
-    cv2.destroyAllWindows()
     
     return True
 
@@ -994,7 +995,7 @@ def calibrate_kinect():
                         cv2.putText(colored, f"{current_depth}", (center_x + 25, center_y),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
                     
-                    cv2.imshow(f'Calibration Step {step_idx + 1}: {boundary_name}', colored)
+                    cv2.imshow('AR Sandbox - Contour Lines', colored)
                     
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('c'):
