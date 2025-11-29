@@ -2,6 +2,16 @@
 
 Your AR sandbox software is now installed and working on your MacBook!
 
+## 📦 Installation
+
+If you need to recreate the virtual environment:
+
+1. Create the venv: `python -m venv kinect_env`
+2. Activate it: `source kinect_env/bin/activate` (macOS/Linux) or `kinect_env\Scripts\activate` (Windows)
+3. Install dependencies: `pip install -r requirements.txt`
+
+Note: `freenect` requires the libfreenect system library (install via Homebrew on macOS: `brew install libfreenect`).
+
 ## ✅ What's Been Set Up
 
 1. **Python Environment**: Virtual environment with all required packages
