@@ -129,6 +129,9 @@ def run_realtime_sandbox():
     start_time = time.time()
     fps = 0.0
     
+    # Create window
+    cv2.namedWindow('AR Sandbox - Contour Lines', cv2.WINDOW_NORMAL)
+
     try:
         while True:
             # Get depth data
