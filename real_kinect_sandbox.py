@@ -833,7 +833,15 @@ def run_realtime_sandbox():
                 print(f"🖥️  Fullscreen {'enabled' if fullscreen else 'disabled'}")
             elif key == ord('m'):
                 print("🔧 Entering calibration mode...")
+                # Save current fullscreen state
+                was_fullscreen = fullscreen
                 run_unified_calibration()
+                # Restore fullscreen state after calibration
+                if was_fullscreen:
+                    cv2.setWindowProperty('AR Sandbox - Contour Lines', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                    fullscreen = True
+                    fullscreen_mode = True
+                    print("🖥️  Restored fullscreen mode")
                 # Recreate mask after calibration
                 if sandbox_corners is not None:
                     depth_data = get_kinect_depth()
@@ -845,6 +853,8 @@ def run_realtime_sandbox():
                 save_calibration()  # Save rotation change
             elif key == ord('a'):
                 print("🎯 Quick projection alignment...")
+                # Save current fullscreen state
+                was_fullscreen = fullscreen
                 if calibrate_projection_alignment():
                     save_calibration()
                     # Recreate mask after alignment
@@ -852,6 +862,11 @@ def run_realtime_sandbox():
                         depth_data = get_kinect_depth()
                         if depth_data is not None:
                             create_sandbox_mask(sandbox_corners, depth_data.shape)
+                # Restore fullscreen state after alignment
+                if was_fullscreen:
+                    cv2.setWindowProperty('AR Sandbox - Contour Lines', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                    fullscreen = True
+                    fullscreen_mode = True
             elif key == ord('v'):
                 mirror_flip = not mirror_flip
                 print(f"🪞 Mirror flip {'enabled' if mirror_flip else 'disabled'}")
@@ -1027,7 +1042,7 @@ def calibrate_kinect():
                         captured = True
                     elif key == ord('q'):
                         print("❌ Calibration cancelled")
-                        cv2.destroyAllWindows()
+                        # Don't destroy window - just return
                         return
                     elif key == 81:  # Left arrow
                         temp_thresholds[step_idx] = max(0, temp_thresholds[step_idx] - 5)
@@ -1038,10 +1053,10 @@ def calibrate_kinect():
                         
     except Exception as e:
         print(f"Calibration error: {e}")
-        cv2.destroyAllWindows()
+        # Don't destroy window - just return
         return
     
-    cv2.destroyAllWindows()
+    # Don't destroy window - keep it for returning to live view
     
     if len(captured_depths) == 3:
         # Store raw depth values directly as thresholds
