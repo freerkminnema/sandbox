@@ -108,6 +108,33 @@ def create_elevation_colors(depth_data):
     
     return colored
 
+def create_elevation_colors_with_thresholds(depth_data, white_brown_thresh, brown_green_thresh, green_blue_thresh):
+    """Create elevation-based color mapping using custom thresholds"""
+    # Normalize to 0-255 range
+    depth_8bit = cv2.convertScaleAbs(depth_data, alpha=255/2047)
+    
+    # Create color image
+    colored = np.zeros((depth_data.shape[0], depth_data.shape[1], 3), dtype=np.uint8)
+    
+    # Apply custom color mapping
+    # Very close objects: white
+    very_close_mask = depth_8bit < white_brown_thresh
+    colored[very_close_mask] = [255, 255, 255]
+    
+    # Close objects: brown
+    close_mask = (depth_8bit >= white_brown_thresh) & (depth_8bit < brown_green_thresh)
+    colored[close_mask] = [139, 69, 19]
+    
+    # Mid areas: green
+    mid_mask = (depth_8bit >= brown_green_thresh) & (depth_8bit < green_blue_thresh)
+    colored[mid_mask] = [34, 139, 34]
+    
+    # Far areas: blue
+    far_mask = depth_8bit >= green_blue_thresh
+    colored[far_mask] = [0, 100, 200]
+    
+    return colored
+
 def create_ar_overlay(depth_data):
     """Create complete AR overlay with contours and colors"""
     # Generate components
@@ -213,6 +240,7 @@ def calibrate_kinect():
     print("- Place a flat surface at the desired boundary distance")
     print("- Press 'c' to capture the depth value")
     print("- Press 'q' to quit calibration")
+    print("- Colors update in real-time as you adjust thresholds")
     
     if not KINECT_AVAILABLE:
         print("❌ Kinect not available - using default thresholds")
@@ -225,34 +253,46 @@ def calibrate_kinect():
     ]
     
     captured_depths = []
+    temp_thresholds = [WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD]
     
     try:
         for step_idx, (boundary_name, description) in enumerate(calibration_steps):
             print(f"\n📍 Step {step_idx + 1}: {boundary_name}")
             print(f"   Position surface at {description}")
             print(f"   Press 'c' to capture, 'q' to quit")
+            print(f"   Use arrow keys to adjust threshold in real-time")
             
             captured = False
             while not captured:
                 depth, _ = freenect.sync_get_depth()
                 if depth is not None:
-                    # Show depth visualization
-                    depth_vis = cv2.convertScaleAbs(depth, alpha=255/2047)
-                    cv2.imshow(f'Calibration Step {step_idx + 1}: {boundary_name}', depth_vis)
+                    # Create color visualization with current thresholds
+                    colored = create_elevation_colors_with_thresholds(depth, temp_thresholds[0], temp_thresholds[1], temp_thresholds[2])
+                    
+                    # Highlight center calibration region
+                    height, width = depth.shape
+                    center_x, center_y = width // 2, height // 2
+                    region_size = min(width, height) // 8
+                    
+                    x1 = max(0, center_x - region_size)
+                    x2 = min(width, center_x + region_size)
+                    y1 = max(0, center_y - region_size)
+                    y2 = min(height, center_y + region_size)
+                    
+                    # Draw rectangle around calibration region
+                    cv2.rectangle(colored, (x1, y1), (x2, y2), (255, 255, 0), 3)
+                    cv2.putText(colored, "CALIBRATION REGION", (x1, y1-10), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+                    
+                    # Show current threshold value
+                    cv2.putText(colored, f"Threshold: {temp_thresholds[step_idx]}", (10, 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    
+                    cv2.imshow(f'Calibration Step {step_idx + 1}: {boundary_name}', colored)
                     
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('c'):
-                        # Focus on center region of the image
-                        height, width = depth.shape
-                        center_x, center_y = width // 2, height // 2
-                        region_size = min(width, height) // 4  # Use 25% of smaller dimension
-                        
-                        # Extract center region
-                        x1 = max(0, center_x - region_size)
-                        x2 = min(width, center_x + region_size)
-                        y1 = max(0, center_y - region_size)
-                        y2 = min(height, center_y + region_size)
-                        
+                        # Capture center region depth
                         center_region = depth[y1:y2, x1:x2]
                         avg_depth = center_region.mean()
                         captured_depths.append(avg_depth)
@@ -262,6 +302,12 @@ def calibrate_kinect():
                         print("❌ Calibration cancelled")
                         cv2.destroyAllWindows()
                         return
+                    elif key == 81:  # Left arrow
+                        temp_thresholds[step_idx] = max(0, temp_thresholds[step_idx] - 5)
+                        print(f"Threshold: {temp_thresholds[step_idx]}")
+                    elif key == 83:  # Right arrow
+                        temp_thresholds[step_idx] = min(255, temp_thresholds[step_idx] + 5)
+                        print(f"Threshold: {temp_thresholds[step_idx]}")
                         
     except Exception as e:
         print(f"Calibration error: {e}")
