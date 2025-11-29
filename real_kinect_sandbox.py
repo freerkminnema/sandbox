@@ -326,6 +326,15 @@ def calibrate_sandbox():
         "Click BOTTOM-LEFT corner"
     ]
     
+    # Mouse callback for corner selection (defined once)
+    def mouse_callback(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN and len(corners) < 4:
+            corners.append((x, y))
+            print(f"✅ Corner {len(corners)}: ({x}, {y})")
+    
+    # Set mouse callback once before the loop
+    cv2.setMouseCallback('AR Sandbox - Contour Lines', mouse_callback)
+    
     while True:
         # Create copy for drawing
         display = colored.copy()
@@ -386,14 +395,6 @@ def calibrate_sandbox():
         cv2.imshow('AR Sandbox - Contour Lines', display)
         
         key = cv2.waitKey(1) & 0xFF
-        
-        # Mouse callback for corner selection
-        def mouse_callback(event, x, y, flags, param):
-            if event == cv2.EVENT_LBUTTONDOWN and len(corners) < 4:
-                corners.append((x, y))
-                print(f"✅ Corner {len(corners)}: ({x}, {y})")
-        
-        cv2.setMouseCallback('Sandbox Calibration', mouse_callback)
         
         if key == 27:  # ESC
             print("❌ Calibration cancelled")
