@@ -242,9 +242,21 @@ def calibrate_kinect():
                     
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('c'):
-                        avg_depth = depth.mean()
+                        # Focus on center region of the image
+                        height, width = depth.shape
+                        center_x, center_y = width // 2, height // 2
+                        region_size = min(width, height) // 4  # Use 25% of smaller dimension
+                        
+                        # Extract center region
+                        x1 = max(0, center_x - region_size)
+                        x2 = min(width, center_x + region_size)
+                        y1 = max(0, center_y - region_size)
+                        y2 = min(height, center_y + region_size)
+                        
+                        center_region = depth[y1:y2, x1:x2]
+                        avg_depth = center_region.mean()
                         captured_depths.append(avg_depth)
-                        print(f"✅ Captured: {avg_depth:.1f} (raw Kinect depth)")
+                        print(f"✅ Captured center region: {avg_depth:.1f} (raw Kinect depth)")
                         captured = True
                     elif key == ord('q'):
                         print("❌ Calibration cancelled")
