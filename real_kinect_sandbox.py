@@ -27,6 +27,7 @@ GREEN_BLUE_THRESHOLD = 1200   # Middle to far boundary
 # Sandbox calibration variables
 sandbox_corners = None  # Will store 4 corner points: [top-left, top-right, bottom-right, bottom-left]
 sandbox_rotation = 0    # Current rotation: 0, 90, 180, 270 degrees
+mirror_flip = False     # Vertical flip for mirror-based projection
 sandbox_mask = None     # Pre-computed mask for sandbox area
 calibration_file = "calibration.json"
 
@@ -74,7 +75,7 @@ def detect_display_resolution():
 
 def load_calibration():
     """Load calibration settings from file"""
-    global sandbox_corners, sandbox_rotation, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD, display_width, display_height
+    global sandbox_corners, sandbox_rotation, mirror_flip, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD, display_width, display_height
     
     if os.path.exists(calibration_file):
         try:
@@ -88,6 +89,7 @@ def load_calibration():
                 sandbox_corners = None
                 
             sandbox_rotation = int(calib.get('rotation', 0))
+            mirror_flip = bool(calib.get('mirror_flip', False))
             
             thresholds = calib.get('depth_thresholds', {})
             WHITE_BROWN_THRESHOLD = int(thresholds.get('white_brown', 400))
@@ -98,6 +100,7 @@ def load_calibration():
             if sandbox_corners is not None:
                 print(f"   Sandbox corners: {sandbox_corners}")
                 print(f"   Rotation: {sandbox_rotation}°")
+                print(f"   Mirror flip: {'enabled' if mirror_flip else 'disabled'}")
             print(f"   Depth thresholds: W→B:{WHITE_BROWN_THRESHOLD}, B→G:{BROWN_GREEN_THRESHOLD}, G→L:{GREEN_BLUE_THRESHOLD}")
             return True
         except Exception as e:
@@ -109,7 +112,7 @@ def load_calibration():
 
 def save_calibration():
     """Save current calibration settings to file"""
-    global sandbox_corners, sandbox_rotation, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
+    global sandbox_corners, sandbox_rotation, mirror_flip, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
     
     # Convert numpy types to regular Python types for JSON serialization
     corners_to_save = None
@@ -119,6 +122,7 @@ def save_calibration():
     calib = {
         'sandbox_corners': corners_to_save,
         'rotation': int(sandbox_rotation),
+        'mirror_flip': bool(mirror_flip),
         'depth_thresholds': {
             'white_brown': int(WHITE_BROWN_THRESHOLD),
             'brown_green': int(BROWN_GREEN_THRESHOLD),
@@ -268,10 +272,14 @@ def create_sandbox_mask(corners, image_size):
 
 def apply_sandbox_transformation(image):
     """Apply sandbox calibration transformation to image"""
-    global sandbox_corners, sandbox_rotation, sandbox_mask
+    global sandbox_corners, sandbox_rotation, mirror_flip, sandbox_mask
     
     if sandbox_corners is None:
         return image
+    
+    # Apply mirror flip if needed (for mirror-based projection)
+    if mirror_flip:
+        image = cv2.flip(image, 0)  # Flip vertically (0 = vertical, 1 = horizontal)
     
     # Apply rotation if needed
     if sandbox_rotation != 0:
@@ -418,7 +426,7 @@ def calibrate_sandbox():
             print(f"✅ Sandbox corners calibrated: {sandbox_corners}")
             return True
     
-    cv2.destroyAllWindows()
+    # Don't destroy window - keep it for next calibration step
     return False
 
 def create_alignment_pattern(width, height):
@@ -682,6 +690,8 @@ def create_ar_overlay(depth_data):
 
 def run_realtime_sandbox():
     """Run real-time AR sandbox with Kinect"""
+    global mirror_flip, sandbox_rotation, fullscreen_mode
+    
     print("🚀 Starting AR Sandbox...")
     print("Controls:")
     print("  Press 'q' to quit")
@@ -690,6 +700,7 @@ def run_realtime_sandbox():
     print("  Press 'e' to toggle elevation colors only")
     print("  Press 'd' to toggle debug info")
     print("  Press 'f' to toggle fullscreen")
+    print("  Press 'v' to toggle mirror flip (for mirror projection)")
     print("  Press 'm' to enter full calibration mode")
     print("  Press 'a' for quick projection alignment")
     print("  Press 'r' to rotate projection (90° increments)")
@@ -748,6 +759,11 @@ def run_realtime_sandbox():
             cv2.putText(display_img, mode_text, (10, 70), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             
+            # Show mirror flip status
+            if mirror_flip:
+                cv2.putText(display_img, "Mirror: ON", (10, 110), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            
             # Debug info
             if debug_mode:
                 # Get center depth value
@@ -767,16 +783,17 @@ def run_realtime_sandbox():
                 else:
                     color_band = "Invalid"
                 
-                # Debug text
+                # Debug text - adjust position if mirror is on
+                debug_y_start = 140 if mirror_flip else 100
                 debug_text1 = f"Center Depth: {center_depth}"
                 debug_text2 = f"Color Band: {color_band}"
                 debug_text3 = f"Thresholds: W:{WHITE_BROWN_THRESHOLD} B:{BROWN_GREEN_THRESHOLD} G:{GREEN_BLUE_THRESHOLD}"
                 
-                cv2.putText(display_img, debug_text1, (10, 100), 
+                cv2.putText(display_img, debug_text1, (10, debug_y_start), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                cv2.putText(display_img, debug_text2, (10, 125), 
+                cv2.putText(display_img, debug_text2, (10, debug_y_start + 25), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                cv2.putText(display_img, debug_text3, (10, 150), 
+                cv2.putText(display_img, debug_text3, (10, debug_y_start + 50), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
                 
                 # Draw crosshair at center
@@ -807,7 +824,6 @@ def run_realtime_sandbox():
                 debug_mode = not debug_mode
                 print(f"🔍 Debug mode {'enabled' if debug_mode else 'disabled'}")
             elif key == ord('f'):
-                global fullscreen_mode
                 fullscreen = not fullscreen
                 fullscreen_mode = fullscreen
                 if fullscreen:
@@ -824,7 +840,6 @@ def run_realtime_sandbox():
                     if depth_data is not None:
                         create_sandbox_mask(sandbox_corners, depth_data.shape)
             elif key == ord('r'):
-                global sandbox_rotation
                 sandbox_rotation = (sandbox_rotation + 90) % 360
                 print(f"🔄 Rotation: {sandbox_rotation}°")
                 save_calibration()  # Save rotation change
@@ -837,6 +852,10 @@ def run_realtime_sandbox():
                         depth_data = get_kinect_depth()
                         if depth_data is not None:
                             create_sandbox_mask(sandbox_corners, depth_data.shape)
+            elif key == ord('v'):
+                mirror_flip = not mirror_flip
+                print(f"🪞 Mirror flip {'enabled' if mirror_flip else 'disabled'}")
+                save_calibration()  # Save mirror flip change
             
             frame_count += 1
             
