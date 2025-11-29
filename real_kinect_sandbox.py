@@ -116,12 +116,14 @@ def run_realtime_sandbox():
     print("  Press 's' to save current frame")
     print("  Press 'c' to toggle contours only")
     print("  Press 'e' to toggle elevation colors only")
+    print("  Press 'f' to toggle fullscreen")
     
     if not KINECT_AVAILABLE:
         print("⚠️  Running in simulation mode - connect Kinect for real data")
     
     # Display mode
     mode = 'combined'  # 'combined', 'contours', 'colors'
+    fullscreen = False
     
     frame_count = 0
     start_time = time.time()
@@ -172,6 +174,10 @@ def run_realtime_sandbox():
             elif key == ord('e'):
                 mode = 'colors' if mode != 'colors' else 'combined'
                 print(f"🎨 Switched to {mode} mode")
+            elif key == ord('f'):
+                fullscreen = not fullscreen
+                cv2.setWindowProperty('AR Sandbox - Contour Lines', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
+                print(f"🖥️  Switched to {'fullscreen' if fullscreen else 'windowed'} mode")
             
             frame_count += 1
             
