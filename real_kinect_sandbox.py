@@ -17,6 +17,11 @@ except ImportError:
     KINECT_AVAILABLE = False
     print("❌ Kinect library not available - using simulation mode")
 
+# Global calibration thresholds (0-255 range)
+WHITE_BROWN_THRESHOLD = 64    # Very close to close boundary
+BROWN_GREEN_THRESHOLD = 128   # Close to middle boundary  
+GREEN_BLUE_THRESHOLD = 192     # Middle to far boundary
+
 def get_kinect_depth():
     """Get depth data from Kinect or simulation"""
     global freenect
@@ -75,25 +80,31 @@ def process_depth_to_contours(depth_data):
     return contours_img
 
 def create_elevation_colors(depth_data):
-    """Create elevation-based color mapping"""
+    """Create elevation-based color mapping using calibrated thresholds"""
+    global WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
+    
     # Normalize to 0-255 range
     depth_8bit = cv2.convertScaleAbs(depth_data, alpha=255/2047)
     
     # Create color image
     colored = np.zeros((depth_data.shape[0], depth_data.shape[1], 3), dtype=np.uint8)
     
-    # Apply terrain-like colormap
-    # Low areas: blue (water)
-    low_mask = depth_8bit < 85
-    colored[low_mask] = [0, 100, 200]
+    # Apply calibrated color mapping
+    # Very close objects: white
+    very_close_mask = depth_8bit < WHITE_BROWN_THRESHOLD
+    colored[very_close_mask] = [255, 255, 255]
     
-    # Mid areas: green (land)  
-    mid_mask = (depth_8bit >= 85) & (depth_8bit < 170)
+    # Close objects: brown
+    close_mask = (depth_8bit >= WHITE_BROWN_THRESHOLD) & (depth_8bit < BROWN_GREEN_THRESHOLD)
+    colored[close_mask] = [139, 69, 19]
+    
+    # Mid areas: green
+    mid_mask = (depth_8bit >= BROWN_GREEN_THRESHOLD) & (depth_8bit < GREEN_BLUE_THRESHOLD)
     colored[mid_mask] = [34, 139, 34]
     
-    # High areas: brown (mountains)
-    high_mask = depth_8bit >= 170
-    colored[high_mask] = [139, 69, 19]
+    # Far areas: blue
+    far_mask = depth_8bit >= GREEN_BLUE_THRESHOLD
+    colored[far_mask] = [0, 100, 200]
     
     return colored
 
@@ -191,41 +202,88 @@ def run_realtime_sandbox():
     print(f"📊 Processed {frame_count} frames at {fps:.1f} FPS")
 
 def calibrate_kinect():
-    """Simple Kinect calibration routine"""
-    global freenect
-    print("🔧 Kinect Calibration")
-    print("Place a flat surface at different distances and press 'c' to capture each position")
-    print("Press 'q' when done")
+    """Calibrate color boundaries for depth mapping"""
+    global freenect, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
+    print("🔧 Kinect Color Boundary Calibration")
+    print("This will set the exact distances where colors change:")
+    print("  1. White → Brown (very close to close)")
+    print("  2. Brown → Green (close to middle)")  
+    print("  3. Green → Blue (middle to far)")
+    print("\nInstructions:")
+    print("- Place a flat surface at the desired boundary distance")
+    print("- Press 'c' to capture the depth value")
+    print("- Press 'q' to quit calibration")
     
     if not KINECT_AVAILABLE:
-        print("❌ Kinect not available - skipping calibration")
+        print("❌ Kinect not available - using default thresholds")
         return
     
-    calibrations = []
+    calibration_steps = [
+        ("White → Brown", "very close to close boundary"),
+        ("Brown → Green", "close to middle boundary"),
+        ("Green → Blue", "middle to far boundary")
+    ]
+    
+    captured_depths = []
     
     try:
-        while len(calibrations) < 5:
-            depth, _ = freenect.sync_get_depth()
-            if depth is not None:
-                # Show depth image
-                depth_vis = cv2.convertScaleAbs(depth, alpha=255/2047)
-                cv2.imshow('Kinect Calibration - Press c to capture, q to quit', depth_vis)
-                
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('c'):
-                    calibrations.append(depth.mean())
-                    print(f"📏 Calibration point {len(calibrations)}: {depth.mean():.1f}")
-                elif key == ord('q'):
-                    break
+        for step_idx, (boundary_name, description) in enumerate(calibration_steps):
+            print(f"\n📍 Step {step_idx + 1}: {boundary_name}")
+            print(f"   Position surface at {description}")
+            print(f"   Press 'c' to capture, 'q' to quit")
+            
+            captured = False
+            while not captured:
+                depth, _ = freenect.sync_get_depth()
+                if depth is not None:
+                    # Show depth visualization
+                    depth_vis = cv2.convertScaleAbs(depth, alpha=255/2047)
+                    cv2.imshow(f'Calibration Step {step_idx + 1}: {boundary_name}', depth_vis)
                     
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('c'):
+                        avg_depth = depth.mean()
+                        captured_depths.append(avg_depth)
+                        print(f"✅ Captured: {avg_depth:.1f} (raw Kinect depth)")
+                        captured = True
+                    elif key == ord('q'):
+                        print("❌ Calibration cancelled")
+                        cv2.destroyAllWindows()
+                        return
+                        
     except Exception as e:
         print(f"Calibration error: {e}")
+        cv2.destroyAllWindows()
+        return
     
     cv2.destroyAllWindows()
     
-    if len(calibrations) > 1:
-        print(f"✅ Calibration complete: {len(calibrations)} points captured")
-        print(f"📊 Depth range: {min(calibrations):.1f} - {max(calibrations):.1f}")
+    if len(captured_depths) == 3:
+        # Convert raw Kinect depth values to 0-255 range
+        min_depth = min(captured_depths)
+        max_depth = max(captured_depths)
+        depth_range = max_depth - min_depth
+        
+        if depth_range > 0:
+            # Map captured depths to 0-255 range
+            white_brown_raw = captured_depths[0]
+            brown_green_raw = captured_depths[1] 
+            green_blue_raw = captured_depths[2]
+            
+            # Convert to 0-255 scale
+            WHITE_BROWN_THRESHOLD = int(((white_brown_raw - min_depth) / depth_range) * 255)
+            BROWN_GREEN_THRESHOLD = int(((brown_green_raw - min_depth) / depth_range) * 255)
+            GREEN_BLUE_THRESHOLD = int(((green_blue_raw - min_depth) / depth_range) * 255)
+            
+            print(f"\n✅ Calibration complete!")
+            print(f"📊 New thresholds (0-255 range):")
+            print(f"   White→Brown: {WHITE_BROWN_THRESHOLD}")
+            print(f"   Brown→Green: {BROWN_GREEN_THRESHOLD}")
+            print(f"   Green→Blue: {GREEN_BLUE_THRESHOLD}")
+        else:
+            print("⚠️  Insufficient depth range - using default thresholds")
+    else:
+        print("⚠️  Incomplete calibration - using default thresholds")
 
 if __name__ == "__main__":
     print("🎯 AR Sandbox - Real Kinect Integration")

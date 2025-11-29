@@ -6,6 +6,11 @@ Works with simulated terrain data (no Kinect required)
 import numpy as np
 import cv2
 
+# Global calibration thresholds (0-255 range)
+WHITE_BROWN_THRESHOLD = 64    # Very close to close boundary
+BROWN_GREEN_THRESHOLD = 128   # Close to middle boundary  
+GREEN_BLUE_THRESHOLD = 192     # Middle to far boundary
+
 def normalize_array(arr, target_min=0, target_max=255):
     """Custom normalization function"""
     arr_min, arr_max = arr.min(), arr.max()
@@ -69,27 +74,31 @@ def create_contour_lines(terrain_data, levels=15):
     return contour_img
 
 def create_elevation_colormap(terrain_data):
-    """Create elevation-based color mapping"""
+    """Create elevation-based color mapping using calibrated thresholds"""
+    global WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
     print("🌈 Creating elevation color map...")
     
     # Normalize terrain to 0-255 range
     normalized = normalize_array(terrain_data, 0, 255)
     
-    # Apply colormap (similar to matplotlib terrain colormap)
-    # Create custom terrain-like colormap
+    # Apply calibrated color mapping
     colored = np.zeros((terrain_data.shape[0], terrain_data.shape[1], 3), dtype=np.uint8)
     
-    # Low elevations: blue/green (water/valleys)
-    low_mask = normalized < 85
-    colored[low_mask] = [0, 100, 200]  # Blue
+    # Very close objects: white
+    very_close_mask = normalized < WHITE_BROWN_THRESHOLD
+    colored[very_close_mask] = [255, 255, 255]
     
-    # Mid elevations: green/brown (hills)
-    mid_mask = (normalized >= 85) & (normalized < 170)
-    colored[mid_mask] = [34, 139, 34]  # Forest green
+    # Close objects: brown
+    close_mask = (normalized >= WHITE_BROWN_THRESHOLD) & (normalized < BROWN_GREEN_THRESHOLD)
+    colored[close_mask] = [139, 69, 19]
     
-    # High elevations: brown/white (mountains)
-    high_mask = normalized >= 170
-    colored[high_mask] = [139, 69, 19]  # Brown
+    # Mid elevations: green
+    mid_mask = (normalized >= BROWN_GREEN_THRESHOLD) & (normalized < GREEN_BLUE_THRESHOLD)
+    colored[mid_mask] = [34, 139, 34]
+    
+    # Far elevations: blue
+    far_mask = normalized >= GREEN_BLUE_THRESHOLD
+    colored[far_mask] = [0, 100, 200]
     
     # Add some variation based on actual elevation
     for i in range(3):
