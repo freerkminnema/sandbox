@@ -98,15 +98,15 @@ def create_elevation_colors(depth_data):
 
     # Close objects: brown (low-mid raw values)
     close_mask = (depth_data >= WHITE_BROWN_THRESHOLD) & (depth_data < BROWN_GREEN_THRESHOLD)
-    colored[close_mask] = [139, 69, 19]
+    colored[close_mask] = [19, 69, 139]  # BGR format for brown
 
     # Mid areas: green (mid-high raw values)
     mid_mask = (depth_data >= BROWN_GREEN_THRESHOLD) & (depth_data < GREEN_BLUE_THRESHOLD)
-    colored[mid_mask] = [34, 139, 34]
+    colored[mid_mask] = [34, 139, 34]  # Green works the same in RGB/BGR
 
     # Far areas: blue (highest raw values)
     far_mask = (depth_data >= GREEN_BLUE_THRESHOLD) & (depth_data < 2047)
-    colored[far_mask] = [0, 100, 200]
+    colored[far_mask] = [200, 100, 0]  # BGR format for blue
 
     return colored
 
@@ -122,15 +122,15 @@ def create_elevation_colors_with_thresholds(depth_data, white_brown_thresh, brow
 
     # Close objects: brown (low-mid raw values)
     close_mask = (depth_data >= white_brown_thresh) & (depth_data < brown_green_thresh)
-    colored[close_mask] = [139, 69, 19]
+    colored[close_mask] = [19, 69, 139]  # BGR format for brown
 
     # Mid areas: green (mid-high raw values)
     mid_mask = (depth_data >= brown_green_thresh) & (depth_data < green_blue_thresh)
-    colored[mid_mask] = [34, 139, 34]
+    colored[mid_mask] = [34, 139, 34]  # Green works the same in RGB/BGR
 
     # Far areas: blue (highest raw values)
     far_mask = (depth_data >= green_blue_thresh) & (depth_data < 2047)
-    colored[far_mask] = [0, 100, 200]
+    colored[far_mask] = [200, 100, 0]  # BGR format for blue
 
     return colored
 
@@ -346,6 +346,40 @@ def calibrate_kinect():
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(colored, f"Threshold: {temp_thresholds[step_idx]}", (10, 90),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    
+                    # Add color sample squares in top right corner
+                    square_size = 40
+                    margin = 10
+                    start_x = width - (square_size + margin) * 4
+                    start_y = margin
+                    
+                    # White square
+                    cv2.rectangle(colored, (start_x, start_y), 
+                                 (start_x + square_size, start_y + square_size), 
+                                 (255, 255, 255), -1)
+                    cv2.putText(colored, "W", (start_x + 12, start_y + 25),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+                    
+                    # Brown square
+                    cv2.rectangle(colored, (start_x + (square_size + margin), start_y), 
+                                 (start_x + (square_size + margin) * 2, start_y + square_size), 
+                                 (19, 69, 139), -1)  # BGR format for brown
+                    cv2.putText(colored, "B", (start_x + (square_size + margin) + 12, start_y + 25),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                    
+                    # Green square
+                    cv2.rectangle(colored, (start_x + (square_size + margin) * 2, start_y), 
+                                 (start_x + (square_size + margin) * 3, start_y + square_size), 
+                                 (34, 139, 34), -1)  # Green works the same in RGB/BGR
+                    cv2.putText(colored, "G", (start_x + (square_size + margin) * 2 + 12, start_y + 25),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                    
+                    # Blue square
+                    cv2.rectangle(colored, (start_x + (square_size + margin) * 3, start_y), 
+                                 (start_x + (square_size + margin) * 4, start_y + square_size), 
+                                 (200, 100, 0), -1)  # BGR format for blue
+                    cv2.putText(colored, "L", (start_x + (square_size + margin) * 3 + 12, start_y + 25),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
                     
                     # Draw crosshair at absolute center point
                     crosshair_color = (0, 0, 255) if is_invalid else (255, 0, 255)  # Red for invalid, magenta for valid
