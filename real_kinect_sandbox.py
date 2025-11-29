@@ -17,10 +17,10 @@ except ImportError:
     KINECT_AVAILABLE = False
     print("❌ Kinect library not available - using simulation mode")
 
-# Global calibration thresholds (0-255 range)
-WHITE_BROWN_THRESHOLD = 64    # Very close to close boundary
-BROWN_GREEN_THRESHOLD = 128   # Close to middle boundary  
-GREEN_BLUE_THRESHOLD = 192     # Middle to far boundary
+# Global calibration thresholds (raw Kinect range 0-2047)
+WHITE_BROWN_THRESHOLD = 400    # Very close to close boundary
+BROWN_GREEN_THRESHOLD = 800   # Close to middle boundary
+GREEN_BLUE_THRESHOLD = 1200   # Middle to far boundary
 
 def get_kinect_depth():
     """Get depth data from Kinect or simulation"""
@@ -62,23 +62,9 @@ def create_simulated_terrain(width=640, height=480):
 
 def process_depth_to_contours(depth_data):
     """Convert depth data to contour line visualization"""
-    # Convert to 8-bit for processing (handle filtered depth values)
-    # Find valid depth range and scale accordingly
-    valid_depths = depth_data[depth_data > 0]  # Only consider valid depths
-    if len(valid_depths) > 0:
-        min_depth = valid_depths.min()
-        max_depth = valid_depths.max()
-        depth_range = max_depth - min_depth
-        if depth_range > 0:
-            # Scale valid depths to 0-255 range
-            depth_8bit = np.zeros_like(depth_data, dtype=np.uint8)
-            valid_mask = depth_data > 0
-            depth_8bit[valid_mask] = ((depth_data[valid_mask] - min_depth) / depth_range * 255).astype(np.uint8)
-        else:
-            depth_8bit = np.zeros_like(depth_data, dtype=np.uint8)
-    else:
-        depth_8bit = np.zeros_like(depth_data, dtype=np.uint8)
-
+    # Convert to 8-bit for processing using simple scaling
+    depth_8bit = cv2.convertScaleAbs(depth_data, alpha=255/2047)
+    
     # Apply Gaussian blur to reduce noise
     blurred = cv2.GaussianBlur(depth_8bit, (5, 5), 0)
     
@@ -102,80 +88,48 @@ def create_elevation_colors(depth_data):
     """Create elevation-based color mapping using calibrated thresholds"""
     global WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
 
-    # Normalize to 0-255 range (handle filtered depth values)
-    valid_depths = depth_data[depth_data > 0]  # Only consider valid depths
-    if len(valid_depths) > 0:
-        min_depth = valid_depths.min()
-        max_depth = valid_depths.max()
-        depth_range = max_depth - min_depth
-        if depth_range > 0:
-            # Scale valid depths to 0-255 range
-            depth_8bit = np.zeros_like(depth_data, dtype=np.uint8)
-            valid_mask = depth_data > 0
-            depth_8bit[valid_mask] = ((depth_data[valid_mask] - min_depth) / depth_range * 255).astype(np.uint8)
-        else:
-            depth_8bit = np.zeros_like(depth_data, dtype=np.uint8)
-    else:
-        depth_8bit = np.zeros_like(depth_data, dtype=np.uint8)
-
     # Create color image
     colored = np.zeros((depth_data.shape[0], depth_data.shape[1], 3), dtype=np.uint8)
 
-    # Apply reversed color mapping (higher values = closer)
-    # Very close objects: white (highest values)
-    very_close_mask = depth_8bit >= GREEN_BLUE_THRESHOLD
+    # Apply color mapping using raw depth values (lower values = closer)
+    # Very close objects: white (lowest raw values)
+    very_close_mask = (depth_data > 0) & (depth_data < WHITE_BROWN_THRESHOLD)
     colored[very_close_mask] = [255, 255, 255]
 
-    # Close objects: brown (high-mid values)
-    close_mask = (depth_8bit >= BROWN_GREEN_THRESHOLD) & (depth_8bit < GREEN_BLUE_THRESHOLD)
+    # Close objects: brown (low-mid raw values)
+    close_mask = (depth_data >= WHITE_BROWN_THRESHOLD) & (depth_data < BROWN_GREEN_THRESHOLD)
     colored[close_mask] = [139, 69, 19]
 
-    # Mid areas: green (mid-low values)
-    mid_mask = (depth_8bit >= WHITE_BROWN_THRESHOLD) & (depth_8bit < BROWN_GREEN_THRESHOLD)
+    # Mid areas: green (mid-high raw values)
+    mid_mask = (depth_data >= BROWN_GREEN_THRESHOLD) & (depth_data < GREEN_BLUE_THRESHOLD)
     colored[mid_mask] = [34, 139, 34]
 
-    # Far areas: blue (lowest values)
-    far_mask = depth_8bit < WHITE_BROWN_THRESHOLD
+    # Far areas: blue (highest raw values)
+    far_mask = (depth_data >= GREEN_BLUE_THRESHOLD) & (depth_data < 2047)
     colored[far_mask] = [0, 100, 200]
 
     return colored
 
 def create_elevation_colors_with_thresholds(depth_data, white_brown_thresh, brown_green_thresh, green_blue_thresh):
     """Create elevation-based color mapping using custom thresholds"""
-    # Normalize to 0-255 range (handle filtered depth values)
-    valid_depths = depth_data[depth_data > 0]  # Only consider valid depths
-    if len(valid_depths) > 0:
-        min_depth = valid_depths.min()
-        max_depth = valid_depths.max()
-        depth_range = max_depth - min_depth
-        if depth_range > 0:
-            # Scale valid depths to 0-255 range
-            depth_8bit = np.zeros_like(depth_data, dtype=np.uint8)
-            valid_mask = depth_data > 0
-            depth_8bit[valid_mask] = ((depth_data[valid_mask] - min_depth) / depth_range * 255).astype(np.uint8)
-        else:
-            depth_8bit = np.zeros_like(depth_data, dtype=np.uint8)
-    else:
-        depth_8bit = np.zeros_like(depth_data, dtype=np.uint8)
-
     # Create color image
     colored = np.zeros((depth_data.shape[0], depth_data.shape[1], 3), dtype=np.uint8)
 
-    # Apply reversed color mapping (higher values = closer)
-    # Very close objects: white (highest values)
-    very_close_mask = depth_8bit >= green_blue_thresh
+    # Apply color mapping using raw depth values (lower values = closer)
+    # Very close objects: white (lowest raw values)
+    very_close_mask = (depth_data > 0) & (depth_data < white_brown_thresh)
     colored[very_close_mask] = [255, 255, 255]
 
-    # Close objects: brown (high-mid values)
-    close_mask = (depth_8bit >= brown_green_thresh) & (depth_8bit < green_blue_thresh)
+    # Close objects: brown (low-mid raw values)
+    close_mask = (depth_data >= white_brown_thresh) & (depth_data < brown_green_thresh)
     colored[close_mask] = [139, 69, 19]
 
-    # Mid areas: green (mid-low values)
-    mid_mask = (depth_8bit >= white_brown_thresh) & (depth_8bit < brown_green_thresh)
+    # Mid areas: green (mid-high raw values)
+    mid_mask = (depth_data >= brown_green_thresh) & (depth_data < green_blue_thresh)
     colored[mid_mask] = [34, 139, 34]
 
-    # Far areas: blue (lowest values)
-    far_mask = depth_8bit < white_brown_thresh
+    # Far areas: blue (highest raw values)
+    far_mask = (depth_data >= green_blue_thresh) & (depth_data < 2047)
     colored[far_mask] = [0, 100, 200]
 
     return colored
@@ -278,10 +232,10 @@ def calibrate_kinect():
     global freenect, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
     print("🔧 Kinect Color Boundary Calibration")
     print("This will set the exact distances where colors change:")
-    print("  1. Blue → Green (far to middle)")
-    print("  2. Green → Brown (middle to close)")  
-    print("  3. Brown → White (close to very close)")
-    print("\nNote: Higher depth values = closer objects")
+    print("  1. White → Brown (very close to close)")
+    print("  2. Brown → Green (close to middle)")
+    print("  3. Green → Blue (middle to far)")
+    print("\nNote: Lower raw depth values = closer objects (0-2047 range)")
     print("\nInstructions:")
     print("- Place a flat surface at the desired boundary distance")
     print("- Press 'c' to capture the depth value")
@@ -293,9 +247,9 @@ def calibrate_kinect():
         return
     
     calibration_steps = [
-        ("Blue → Green", "far to middle boundary"),
-        ("Green → Brown", "middle to close boundary"),
-        ("Brown → White", "close to very close boundary")
+        ("White → Brown", "very close to close boundary"),
+        ("Brown → Green", "close to middle boundary"),
+        ("Green → Blue", "middle to far boundary")
     ]
     
     captured_depths = []
@@ -307,7 +261,7 @@ def calibrate_kinect():
             print(f"   Position surface at {description}")
             print(f"   Press 'c' to capture, 'q' to quit")
             print(f"   Use arrow keys to adjust threshold in real-time")
-            print(f"   Debug: Raw (0-2047) | 8-bit (0-255) | Status")
+            print(f"   Debug: Raw (0-2047) | Status")
             
             captured = False
             while not captured:
@@ -338,31 +292,16 @@ def calibrate_kinect():
                     rect_color = (0, 0, 255) if is_invalid else (255, 255, 0)  # Red for invalid, yellow for valid
                     cv2.rectangle(colored, (x1, y1), (x2, y2), rect_color, 3)
 
-                    # Calculate 8-bit value using same logic as color mapping
-                    valid_depths = depth[depth > 0]  # Only consider valid depths
-                    if len(valid_depths) > 0 and current_depth > 0:
-                        min_depth = valid_depths.min()
-                        max_depth = valid_depths.max()
-                        depth_range = max_depth - min_depth
-                        if depth_range > 0:
-                            current_depth_8bit = int((current_depth - min_depth) / depth_range * 255)
-                        else:
-                            current_depth_8bit = 0
-                    else:
-                        current_depth_8bit = 0
-
                     # Debug output to console
                     status = "VALID" if current_depth > 0 and current_depth < 2047 else "INVALID"
-                    print(f"\rRaw: {current_depth:4d} | 8-bit: {current_depth_8bit:3d} | Status: {status}", end="", flush=True)
+                    print(f"\rRaw: {current_depth:4d} | Status: {status}", end="", flush=True)
 
                     # Show calibration info
                     cv2.putText(colored, f"Calibrating: {boundary_name}", (10, 30),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(colored, f"Raw depth: {current_depth}", (10, 60),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    cv2.putText(colored, f"8-bit depth: {current_depth_8bit}", (10, 90),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    cv2.putText(colored, f"Threshold: {temp_thresholds[step_idx]}", (10, 120),
+                    cv2.putText(colored, f"Threshold: {temp_thresholds[step_idx]}", (10, 90),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
                     # Draw crosshair at absolute center point
@@ -374,7 +313,7 @@ def calibrate_kinect():
                         cv2.putText(colored, "INVALID DISTANCE", (center_x + 25, center_y),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                     else:
-                        cv2.putText(colored, f"{current_depth_8bit}", (center_x + 25, center_y),
+                        cv2.putText(colored, f"{current_depth}", (center_x + 25, center_y),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
                     
                     cv2.imshow(f'Calibration Step {step_idx + 1}: {boundary_name}', colored)
@@ -386,21 +325,8 @@ def calibrate_kinect():
                         center_y = height // 2
                         center_depth = depth[center_y, center_x]
 
-                        # Calculate 8-bit value using same logic as color mapping
-                        valid_depths = depth[depth > 0]  # Only consider valid depths
-                        if len(valid_depths) > 0 and center_depth > 0:
-                            min_depth = valid_depths.min()
-                            max_depth = valid_depths.max()
-                            depth_range = max_depth - min_depth
-                            if depth_range > 0:
-                                center_depth_8bit = int((center_depth - min_depth) / depth_range * 255)
-                            else:
-                                center_depth_8bit = 0
-                        else:
-                            center_depth_8bit = 0
-
                         captured_depths.append(center_depth)
-                        print(f"\n✅ Captured center point: Raw={center_depth} | 8-bit={center_depth_8bit}")
+                        print(f"\n✅ Captured center point: Raw={center_depth}")
                         captured = True
                     elif key == ord('q'):
                         print("❌ Calibration cancelled")
@@ -421,29 +347,16 @@ def calibrate_kinect():
     cv2.destroyAllWindows()
     
     if len(captured_depths) == 3:
-        # Convert raw Kinect depth values to 0-255 range
-        min_depth = min(captured_depths)
-        max_depth = max(captured_depths)
-        depth_range = max_depth - min_depth
+        # Store raw depth values directly as thresholds
+        WHITE_BROWN_THRESHOLD = captured_depths[0]
+        BROWN_GREEN_THRESHOLD = captured_depths[1]
+        GREEN_BLUE_THRESHOLD = captured_depths[2]
         
-        if depth_range > 0:
-            # Map captured depths to 0-255 range
-            white_brown_raw = captured_depths[0]
-            brown_green_raw = captured_depths[1] 
-            green_blue_raw = captured_depths[2]
-            
-            # Convert to 0-255 scale
-            WHITE_BROWN_THRESHOLD = int(((white_brown_raw - min_depth) / depth_range) * 255)
-            BROWN_GREEN_THRESHOLD = int(((brown_green_raw - min_depth) / depth_range) * 255)
-            GREEN_BLUE_THRESHOLD = int(((green_blue_raw - min_depth) / depth_range) * 255)
-            
-            print(f"\n✅ Calibration complete!")
-            print(f"📊 New thresholds (0-255 range):")
-            print(f"   Blue→Green: {WHITE_BROWN_THRESHOLD}")
-            print(f"   Green→Brown: {BROWN_GREEN_THRESHOLD}")
-            print(f"   Brown→White: {GREEN_BLUE_THRESHOLD}")
-        else:
-            print("⚠️  Insufficient depth range - using default thresholds")
+        print(f"\n✅ Calibration complete!")
+        print(f"📊 New thresholds (raw 0-2047 range):")
+        print(f"   White→Brown: {WHITE_BROWN_THRESHOLD}")
+        print(f"   Brown→Green: {BROWN_GREEN_THRESHOLD}")
+        print(f"   Green→Blue: {GREEN_BLUE_THRESHOLD}")
     else:
         print("⚠️  Incomplete calibration - using default thresholds")
 
