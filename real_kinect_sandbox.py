@@ -326,13 +326,17 @@ def calibrate_kinect():
                     y1 = max(0, center_y - region_size)
                     y2 = min(height, center_y + region_size)
                     
-                    # Draw rectangle around calibration region
-                    cv2.rectangle(colored, (x1, y1), (x2, y2), (255, 255, 0), 3)
-                    
                     # Calculate current depth at absolute center point
                     center_x = width // 2
                     center_y = height // 2
                     current_depth = depth[center_y, center_x]
+
+                    # Check if depth is invalid
+                    is_invalid = current_depth == 0 or current_depth == 2047
+
+                    # Draw rectangle around calibration region (red if invalid, yellow if valid)
+                    rect_color = (0, 0, 255) if is_invalid else (255, 255, 0)  # Red for invalid, yellow for valid
+                    cv2.rectangle(colored, (x1, y1), (x2, y2), rect_color, 3)
 
                     # Calculate 8-bit value using same logic as color mapping
                     valid_depths = depth[depth > 0]  # Only consider valid depths
@@ -362,11 +366,16 @@ def calibrate_kinect():
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
                     # Draw crosshair at absolute center point
-                    cv2.drawMarker(colored, (center_x, center_y), (255, 0, 255), cv2.MARKER_CROSS, 20, 3)
-                    
-                    # Show depth value at center point
-                    cv2.putText(colored, f"{current_depth_8bit}", (center_x + 25, center_y), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+                    crosshair_color = (0, 0, 255) if is_invalid else (255, 0, 255)  # Red for invalid, magenta for valid
+                    cv2.drawMarker(colored, (center_x, center_y), crosshair_color, cv2.MARKER_CROSS, 20, 3)
+
+                    # Show depth value or invalid distance text
+                    if is_invalid:
+                        cv2.putText(colored, "INVALID DISTANCE", (center_x + 25, center_y),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    else:
+                        cv2.putText(colored, f"{current_depth_8bit}", (center_x + 25, center_y),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
                     
                     cv2.imshow(f'Calibration Step {step_idx + 1}: {boundary_name}', colored)
                     
