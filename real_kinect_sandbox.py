@@ -571,7 +571,13 @@ def calibrate_projection_alignment():
         # The pattern is already at display resolution, so just show it directly
         cv2.imshow('AR Sandbox - Contour Lines', display)
         
-        key = cv2.waitKey(1) & 0xFF
+        # Get full key code (not masked) for special keys
+        key_full = cv2.waitKey(1)
+        key = key_full & 0xFF
+        
+        # Debug: print key codes to help troubleshoot
+        if key != 255:  # 255 means no key pressed
+            print(f"Key pressed - Full: {key_full}, Masked: {key}")
         
         if key == 27:  # ESC
             print("❌ Projection alignment cancelled")
@@ -590,14 +596,19 @@ def calibrate_projection_alignment():
         elif key == 256 + 9:  # SHIFT+TAB (approximate)
             selected_corner = (selected_corner - 1) % 4
             print(f"📍 Selected corner: {corner_labels[selected_corner]}")
-        elif key == 82:  # UP arrow
+        # Arrow keys - handle both masked and full key codes for cross-platform support
+        elif key == 82 or key_full == 65362 or key_full == 2490368 or key == 0:  # UP arrow (various platforms)
             working_corners[selected_corner][1] = max(0, working_corners[selected_corner][1] - 5)
-        elif key == 84:  # DOWN arrow
+            print(f"↑ Moved {corner_labels[selected_corner]} up to {working_corners[selected_corner]}")
+        elif key == 84 or key_full == 65364 or key_full == 2621440 or key == 1:  # DOWN arrow
             working_corners[selected_corner][1] = min(display_height, working_corners[selected_corner][1] + 5)
-        elif key == 81:  # LEFT arrow
+            print(f"↓ Moved {corner_labels[selected_corner]} down to {working_corners[selected_corner]}")
+        elif key == 81 or key_full == 65361 or key_full == 2424832 or key == 2:  # LEFT arrow
             working_corners[selected_corner][0] = max(0, working_corners[selected_corner][0] - 5)
-        elif key == 83:  # RIGHT arrow
+            print(f"← Moved {corner_labels[selected_corner]} left to {working_corners[selected_corner]}")
+        elif key == 83 or key_full == 65363 or key_full == 2555904 or key == 3:  # RIGHT arrow
             working_corners[selected_corner][0] = min(display_width, working_corners[selected_corner][0] + 5)
+            print(f"→ Moved {corner_labels[selected_corner]} right to {working_corners[selected_corner]}")
     
     return False
 
@@ -650,22 +661,8 @@ def run_unified_calibration():
     # Save calibration
     save_calibration()
     
-    # Show completion screen
-    complete_screen = np.zeros((display_height, display_width, 3), dtype=np.uint8)
-    cv2.putText(complete_screen, "CALIBRATION COMPLETE!", 
-               (display_width // 2 - 180, display_height // 2),
-               cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
-    
-    cv2.putText(complete_screen, "Your sandbox is ready to use", 
-               (display_width // 2 - 160, display_height // 2 + 50),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-    
-    cv2.putText(complete_screen, "Press any key to continue...", 
-               (display_width // 2 - 140, display_height // 2 + 100),
-               cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200, 200, 200), 2)
-    
-    cv2.imshow('AR Sandbox - Contour Lines', complete_screen)
-    cv2.waitKey(0)
+    # Don't show completion screen - just return to live view
+    print("✅ Calibration complete! Returning to live view...")
     
     return True
 
@@ -813,8 +810,11 @@ def run_realtime_sandbox():
                 global fullscreen_mode
                 fullscreen = not fullscreen
                 fullscreen_mode = fullscreen
-                cv2.setWindowProperty('AR Sandbox - Contour Lines', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
-                print(f"🖥️  Switched to {'fullscreen' if fullscreen else 'windowed'} mode")
+                if fullscreen:
+                    cv2.setWindowProperty('AR Sandbox - Contour Lines', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                else:
+                    cv2.setWindowProperty('AR Sandbox - Contour Lines', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                print(f"🖥️  Fullscreen {'enabled' if fullscreen else 'disabled'}")
             elif key == ord('m'):
                 print("🔧 Entering calibration mode...")
                 run_unified_calibration()

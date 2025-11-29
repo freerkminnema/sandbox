@@ -1,26 +1,26 @@
 {
   "sandbox_corners": [
     [
-      216,
-      95
+      158,
+      118
     ],
     [
-      508,
-      114
+      480,
+      120
     ],
     [
-      493,
-      400
+      480,
+      360
     ],
     [
-      204,
-      381
+      160,
+      360
     ]
   ],
   "rotation": 270,
   "depth_thresholds": {
-    "white_brown": 809,
-    "brown_green": 809,
-    "green_blue": 809
+    "white_brown": 806,
+    "brown_green": 805,
+    "green_blue": 806
   }
 }
