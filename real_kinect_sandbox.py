@@ -153,6 +153,7 @@ def run_realtime_sandbox():
     print("  Press 's' to save current frame")
     print("  Press 'c' to toggle contours only")
     print("  Press 'e' to toggle elevation colors only")
+    print("  Press 'd' to toggle debug info")
     print("  Press 'f' to toggle fullscreen")
     
     if not KINECT_AVAILABLE:
@@ -161,6 +162,7 @@ def run_realtime_sandbox():
     # Display mode
     mode = 'combined'  # 'combined', 'contours', 'colors'
     fullscreen = False
+    debug_mode = False
     
     frame_count = 0
     start_time = time.time()
@@ -197,6 +199,44 @@ def run_realtime_sandbox():
             cv2.putText(display_img, mode_text, (10, 70), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             
+            # Debug info
+            if debug_mode:
+                # Get center depth value
+                height, width = depth_data.shape
+                center_x, center_y = width // 2, height // 2
+                center_depth = depth_data[center_y, center_x]
+                
+                # Determine color band
+                if center_depth > 0 and center_depth < WHITE_BROWN_THRESHOLD:
+                    color_band = "White"
+                elif center_depth >= WHITE_BROWN_THRESHOLD and center_depth < BROWN_GREEN_THRESHOLD:
+                    color_band = "Brown"
+                elif center_depth >= BROWN_GREEN_THRESHOLD and center_depth < GREEN_BLUE_THRESHOLD:
+                    color_band = "Green"
+                elif center_depth >= GREEN_BLUE_THRESHOLD and center_depth < 2047:
+                    color_band = "Blue"
+                else:
+                    color_band = "Invalid"
+                
+                # Debug text
+                debug_text1 = f"Center Depth: {center_depth}"
+                debug_text2 = f"Color Band: {color_band}"
+                debug_text3 = f"Thresholds: W:{WHITE_BROWN_THRESHOLD} B:{BROWN_GREEN_THRESHOLD} G:{GREEN_BLUE_THRESHOLD}"
+                
+                cv2.putText(display_img, debug_text1, (10, 100), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                cv2.putText(display_img, debug_text2, (10, 125), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                cv2.putText(display_img, debug_text3, (10, 150), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+                
+                # Draw crosshair at center
+                cv2.drawMarker(display_img, (center_x, center_y), (0, 255, 255), cv2.MARKER_CROSS, 20, 2)
+                
+                # Show depth value at center
+                cv2.putText(display_img, f"{center_depth}", (center_x + 25, center_y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            
             # Show image
             cv2.imshow('AR Sandbox - Contour Lines', display_img)
             
@@ -214,6 +254,9 @@ def run_realtime_sandbox():
             elif key == ord('e'):
                 mode = 'colors' if mode != 'colors' else 'combined'
                 print(f"🎨 Switched to {mode} mode")
+            elif key == ord('d'):
+                debug_mode = not debug_mode
+                print(f"🔍 Debug mode {'enabled' if debug_mode else 'disabled'}")
             elif key == ord('f'):
                 fullscreen = not fullscreen
                 cv2.setWindowProperty('AR Sandbox - Contour Lines', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
