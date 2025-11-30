@@ -77,6 +77,21 @@ class Fish:
                 self.y = 0
                 self.vx = 0
                 self.vy = 0
+        elif fish_type == 'car':
+            self.size = 6
+            self.color = (0, 0, 200) # Red (BGR)
+            self.base_speed = 0.3
+            
+            if immediate:
+                self.respawn_timer = 0
+                self.respawn()
+            else:
+                self.respawn_timer = np.random.randint(50, 150)
+                self.active = False
+                self.x = 0
+                self.y = 0
+                self.vx = 0
+                self.vy = 0
         else: # 'fish'
             self.size = 2 # Even smaller fish
             self.color = (0, 165, 255) # Orange
@@ -91,8 +106,8 @@ class Fish:
         self.vy = np.random.uniform(-self.base_speed, self.base_speed)
         self.active = False
 
-    def update(self, depth_data, threshold):
-        # Handle respawn timer (for whale/mermaid)
+    def update(self, depth_data, water_threshold):
+        # Handle respawn timer (for whale/mermaid/car)
         if self.respawn_timer > 0:
             self.respawn_timer -= 1
             if self.respawn_timer == 0:
@@ -114,15 +129,22 @@ class Fish:
             self.vy *= -1
             new_y = max(0, min(new_y, self.height - 1))
 
-        # Check if new position is in water (depth >= threshold)
+        # Check if new position is valid terrain
         ix, iy = int(new_x), int(new_y)
         ix = max(0, min(ix, self.width - 1))
         iy = max(0, min(iy, self.height - 1))
 
         current_depth = depth_data[iy, ix]
-        is_water = current_depth >= threshold and current_depth < 2047
         
-        if is_water:
+        # Different terrain requirements for different entity types
+        if self.type == 'car':
+            # Cars drive on green (mid-level terrain)
+            is_valid = current_depth >= BROWN_GREEN_THRESHOLD and current_depth < GREEN_BLUE_THRESHOLD
+        else:
+            # Fish, whales, mermaids swim in water (blue/far areas)
+            is_valid = current_depth >= water_threshold and current_depth < 2047
+        
+        if is_valid:
             self.active = True
             self.x = new_x
             self.y = new_y
@@ -131,29 +153,36 @@ class Fish:
             if self.type == 'whale':
                 # Whale moves smoothly, rarely changes direction
                 if np.random.random() < 0.005:
-                    self.vx += np.random.uniform(-0.05, 0.05) # Reduced from 0.2
+                    self.vx += np.random.uniform(-0.05, 0.05)
                     self.vy += np.random.uniform(-0.05, 0.05)
             elif self.type == 'mermaid':
-                # Mermaid moves fast and graceful (sinusoidal-ish)
+                # Mermaid moves fast and graceful
                 if np.random.random() < 0.05:
-                    self.vx += np.random.uniform(-0.125, 0.125) # Reduced from 0.5
+                    self.vx += np.random.uniform(-0.125, 0.125)
                     self.vy += np.random.uniform(-0.125, 0.125)
+            elif self.type == 'car':
+                # Cars move straighter, occasional small adjustments
+                if np.random.random() < 0.02:
+                    self.vx += np.random.uniform(-0.1, 0.1)
+                    self.vy += np.random.uniform(-0.1, 0.1)
             else:
                 # Fish move erratically
                 if np.random.random() < 0.2:
-                    self.vx += np.random.uniform(-0.25, 0.25) # Reduced from 1.0
+                    self.vx += np.random.uniform(-0.25, 0.25)
                     self.vy += np.random.uniform(-0.25, 0.25)
             
             # Cap velocity
             speed = np.sqrt(self.vx**2 + self.vy**2)
             if self.type == 'whale':
-                max_speed = 0.375 # Was 1.5
+                max_speed = 0.375
             elif self.type == 'mermaid':
-                max_speed = 0.75 # Was 3.0
+                max_speed = 0.75
+            elif self.type == 'car':
+                max_speed = 0.5
             else:
-                max_speed = 0.625 # Was 2.5
+                max_speed = 0.625
             
-            min_speed = 0.125 # Was 0.5
+            min_speed = 0.125
             
             if speed > max_speed:
                 scale = max_speed / speed
@@ -184,7 +213,52 @@ class Fish:
             
         pt1 = (int(self.x), int(self.y))
         
-        if self.type == 'mermaid':
+        if self.type == 'car':
+            # Draw Car: rectangle body with wheels
+            if self.vx != 0 or self.vy != 0:
+                angle = np.arctan2(self.vy, self.vx)
+            else:
+                angle = 0
+                
+            # Car body (rectangle)
+            length = self.size * 2
+            width = self.size
+            
+            # Calculate corners of car body
+            front_x = int(self.x + np.cos(angle) * length / 2)
+            front_y = int(self.y + np.sin(angle) * length / 2)
+            back_x = int(self.x - np.cos(angle) * length / 2)
+            back_y = int(self.y - np.sin(angle) * length / 2)
+            
+            # Perpendicular for width
+            perp_angle = angle + np.pi / 2
+            w1_x = int(np.cos(perp_angle) * width / 2)
+            w1_y = int(np.sin(perp_angle) * width / 2)
+            
+            # Four corners
+            corners = np.array([
+                [front_x + w1_x, front_y + w1_y],
+                [front_x - w1_x, front_y - w1_y],
+                [back_x - w1_x, back_y - w1_y],
+                [back_x + w1_x, back_y + w1_y]
+            ], np.int32)
+            
+            # Draw car body
+            cv2.fillPoly(img, [corners], self.color)
+            
+            # Draw wheels (small black circles)
+            wheel_size = 2
+            wheel_offset = length / 3
+            for sign in [-1, 1]:
+                wheel_x = int(self.x + sign * np.cos(angle) * wheel_offset + np.cos(perp_angle) * width / 2)
+                wheel_y = int(self.y + sign * np.sin(angle) * wheel_offset + np.sin(perp_angle) * width / 2)
+                cv2.circle(img, (wheel_x, wheel_y), wheel_size, (0, 0, 0), -1)
+                
+                wheel_x = int(self.x + sign * np.cos(angle) * wheel_offset - np.cos(perp_angle) * width / 2)
+                wheel_y = int(self.y + sign * np.sin(angle) * wheel_offset - np.sin(perp_angle) * width / 2)
+                cv2.circle(img, (wheel_x, wheel_y), wheel_size, (0, 0, 0), -1)
+                
+        elif self.type == 'mermaid':
             # Draw Mermaid: Purple head, Green tail
             # Head
             cv2.circle(img, pt1, self.size // 2, (200, 200, 255), -1) # Pale face
@@ -1004,6 +1078,7 @@ def run_realtime_sandbox():
     print("  Press 'r' to rotate projection (90° increments)")
     print("  Press '1' to spawn a Whale 🐋")
     print("  Press '2' to spawn a Mermaid 🧜‍♀️")
+    print("  Press '3' to spawn a Car 🚗")
     print(f"  Auto-detected resolution: {display_width}x{display_height}")
     
     if not KINECT_AVAILABLE:
@@ -1030,10 +1105,13 @@ def run_realtime_sandbox():
     # Initialize fishes
     # We need depth dimensions, usually 640x480 for Kinect v1
     # We'll initialize them and they will find water or respawn
-    # Initialize fishes, one whale, and one mermaid
+    # Initialize fishes, one whale, one mermaid, and some cars
     fishes = [Fish(640, 480, fish_type='fish') for _ in range(15)]
     fishes.append(Fish(640, 480, fish_type='whale'))
     fishes.append(Fish(640, 480, fish_type='mermaid'))
+    # Add 3 cars
+    for _ in range(3):
+        fishes.append(Fish(640, 480, fish_type='car'))
 
     try:
         while True:
@@ -1114,11 +1192,13 @@ def run_realtime_sandbox():
                 fish_count = sum(1 for f in fishes if f.type == 'fish')
                 whale_count = sum(1 for f in fishes if f.type == 'whale')
                 mermaid_count = sum(1 for f in fishes if f.type == 'mermaid')
+                car_count = sum(1 for f in fishes if f.type == 'car')
                 active_fish = sum(1 for f in fishes if f.type == 'fish' and f.active)
                 active_whale = sum(1 for f in fishes if f.type == 'whale' and f.active)
                 active_mermaid = sum(1 for f in fishes if f.type == 'mermaid' and f.active)
+                active_car = sum(1 for f in fishes if f.type == 'car' and f.active)
                 
-                creature_text = f"Creatures (Active/Total): Fish:{active_fish}/{fish_count} Whales:{active_whale}/{whale_count} Mermaids:{active_mermaid}/{mermaid_count}"
+                creature_text = f"Creatures (Active/Total): Fish:{active_fish}/{fish_count} Whales:{active_whale}/{whale_count} Mermaids:{active_mermaid}/{mermaid_count} Cars:{active_car}/{car_count}"
                 cv2.putText(display_img, creature_text, (10, debug_y_start + 80), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 200), 2)
                 
@@ -1182,6 +1262,9 @@ def run_realtime_sandbox():
             elif key == ord('2'):
                 fishes.append(Fish(640, 480, fish_type='mermaid', immediate=True))
                 print("🧜‍♀️ Mermaid spawned!")
+            elif key == ord('3'):
+                fishes.append(Fish(640, 480, fish_type='car', immediate=True))
+                print("🚗 Car spawned!")
             
             frame_count += 1
             
