@@ -24,12 +24,13 @@ WHITE_BROWN_THRESHOLD = 400    # Very close to close boundary
 BROWN_GREEN_THRESHOLD = 800   # Close to middle boundary
 GREEN_BLUE_THRESHOLD = 1200   # Middle to far boundary
 
-# Sandbox calibration variables
-sandbox_corners = None  # Will store 4 corner points: [top-left, top-right, bottom-right, bottom-left]
-projector_corners = None # Will store 4 corner points in projector coordinates
+# Simplified calibration variables
 sandbox_rotation = 0    # Current rotation: 0, 90, 180, 270 degrees
 mirror_flip = False     # Vertical flip for mirror-based projection
-sandbox_mask = None     # Pre-computed mask for sandbox area
+sensor_scale = 1.0      # Scale factor for sensor view
+sensor_offset_x = 0     # X offset in pixels
+sensor_offset_y = 0     # Y offset in pixels
+mask_corners = None     # 4 corners defining the table boundary for masking
 calibration_file = "calibration.json"
 
 # Display resolution variables
@@ -76,27 +77,25 @@ def detect_display_resolution():
 
 def load_calibration():
     """Load calibration settings from file"""
-    global sandbox_corners, projector_corners, sandbox_rotation, mirror_flip, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD, display_width, display_height
+    global sandbox_rotation, mirror_flip, sensor_scale, sensor_offset_x, sensor_offset_y, mask_corners
+    global WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
     
     if os.path.exists(calibration_file):
         try:
             with open(calibration_file, 'r') as f:
                 calib = json.load(f)
             
-            corners = calib.get('sandbox_corners', None)
-            if corners is not None:
-                sandbox_corners = [(int(x), int(y)) for x, y in corners]
-            else:
-                sandbox_corners = None
-                
-            proj_corners = calib.get('projector_corners', None)
-            if proj_corners is not None:
-                projector_corners = [(int(x), int(y)) for x, y in proj_corners]
-            else:
-                projector_corners = None
-                
             sandbox_rotation = int(calib.get('rotation', 0))
             mirror_flip = bool(calib.get('mirror_flip', False))
+            sensor_scale = float(calib.get('sensor_scale', 1.0))
+            sensor_offset_x = int(calib.get('sensor_offset_x', 0))
+            sensor_offset_y = int(calib.get('sensor_offset_y', 0))
+            
+            corners = calib.get('mask_corners', None)
+            if corners is not None:
+                mask_corners = [(int(x), int(y)) for x, y in corners]
+            else:
+                mask_corners = None
             
             thresholds = calib.get('depth_thresholds', {})
             WHITE_BROWN_THRESHOLD = int(thresholds.get('white_brown', 400))
@@ -104,12 +103,12 @@ def load_calibration():
             GREEN_BLUE_THRESHOLD = int(thresholds.get('green_blue', 1200))
             
             print(f"✅ Calibration loaded from {calibration_file}")
-            if sandbox_corners is not None:
-                print(f"   Sandbox corners: {sandbox_corners}")
-            if projector_corners is not None:
-                print(f"   Projector corners: {projector_corners}")
-                print(f"   Rotation: {sandbox_rotation}°")
-                print(f"   Mirror flip: {'enabled' if mirror_flip else 'disabled'}")
+            print(f"   Rotation: {sandbox_rotation}°")
+            print(f"   Mirror flip: {'enabled' if mirror_flip else 'disabled'}")
+            print(f"   Sensor scale: {sensor_scale:.2f}")
+            print(f"   Sensor offset: ({sensor_offset_x}, {sensor_offset_y})")
+            if mask_corners is not None:
+                print(f"   Mask corners: {mask_corners}")
             print(f"   Depth thresholds: W→B:{WHITE_BROWN_THRESHOLD}, B→G:{BROWN_GREEN_THRESHOLD}, G→L:{GREEN_BLUE_THRESHOLD}")
             return True
         except Exception as e:
@@ -121,18 +120,21 @@ def load_calibration():
 
 def save_calibration():
     """Save current calibration settings to file"""
-    global sandbox_corners, projector_corners, sandbox_rotation, mirror_flip, WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
+    global sandbox_rotation, mirror_flip, sensor_scale, sensor_offset_x, sensor_offset_y, mask_corners
+    global WHITE_BROWN_THRESHOLD, BROWN_GREEN_THRESHOLD, GREEN_BLUE_THRESHOLD
     
-    # Convert numpy types to regular Python types for JSON serialization
+    # Convert mask corners to list format for JSON
     corners_to_save = None
-    if sandbox_corners is not None:
-        corners_to_save = [[int(x), int(y)] for x, y in sandbox_corners]
+    if mask_corners is not None:
+        corners_to_save = [[int(x), int(y)] for x, y in mask_corners]
     
     calib = {
-        'sandbox_corners': corners_to_save,
-        'projector_corners': [[int(x), int(y)] for x, y in projector_corners] if projector_corners is not None else None,
         'rotation': int(sandbox_rotation),
         'mirror_flip': bool(mirror_flip),
+        'sensor_scale': float(sensor_scale),
+        'sensor_offset_x': int(sensor_offset_x),
+        'sensor_offset_y': int(sensor_offset_y),
+        'mask_corners': corners_to_save,
         'depth_thresholds': {
             'white_brown': int(WHITE_BROWN_THRESHOLD),
             'brown_green': int(BROWN_GREEN_THRESHOLD),
@@ -261,253 +263,291 @@ def create_elevation_colors_with_thresholds(depth_data, white_brown_thresh, brow
 
     return colored
 
-def create_sandbox_mask(corners, image_size):
-    """Create a binary mask for the sandbox area"""
-    global sandbox_mask
+def apply_transformation(image):
+    """Apply simplified transformation: scale, translate, rotate, flip, and mask"""
+    global sandbox_rotation, mirror_flip, sensor_scale, sensor_offset_x, sensor_offset_y, mask_corners
     
-    if corners is None or len(corners) != 4:
-        return None
-    
-    mask = np.zeros(image_size[:2], dtype=np.uint8)
-    
-    # Convert corners to proper format
-    pts = np.array(corners, np.int32)
-    pts = pts.reshape((-1, 1, 2))
-    
-    # Fill the polygon
-    cv2.fillPoly(mask, [pts], 255)
-    
-    sandbox_mask = mask
-    return mask
-
-def apply_sandbox_transformation(image):
-    """Apply sandbox calibration transformation to image with perspective warping"""
-    global sandbox_corners, projector_corners, sandbox_rotation, mirror_flip, sandbox_mask
-    
-    if sandbox_corners is None:
-        return image
-    
-    # Get image dimensions
+    # Get original dimensions
     height, width = image.shape[:2]
     
-    # Define source points (the four corners in the Kinect's view)
-    # These are the corners of the sandbox as seen by the Kinect
-    src_points = np.float32(sandbox_corners)
+    # Step 1: Scale the image
+    if sensor_scale != 1.0:
+        new_width = int(width * sensor_scale)
+        new_height = int(height * sensor_scale)
+        image = cv2.resize(image, (new_width, new_height))
     
-    # Define destination points (where these corners should map to in the projection)
-    if projector_corners is not None:
-        dst_points = np.float32(projector_corners)
-    else:
-        # Default: Map to the full display area
-        dst_points = np.float32([
-            [0, 0],                    # Top-left
-            [display_width - 1, 0],            # Top-right
-            [display_width - 1, display_height - 1],   # Bottom-right
-            [0, display_height - 1]            # Bottom-left
-        ])
+    # Step 2: Create canvas at display resolution
+    canvas = np.zeros((display_height, display_width, 3) if len(image.shape) == 3 else (display_height, display_width), dtype=np.uint8)
     
-    # Calculate perspective transformation matrix (homography)
-    perspective_matrix = cv2.getPerspectiveTransform(src_points, dst_points)
+    # Step 3: Calculate position with offset (centered by default)
+    img_h, img_w = image.shape[:2]
+    x_pos = (display_width - img_w) // 2 + sensor_offset_x
+    y_pos = (display_height - img_h) // 2 + sensor_offset_y
     
-    # Apply perspective warp to align Kinect view with projector view
-    # Output size is set to display resolution
-    warped = cv2.warpPerspective(image, perspective_matrix, (display_width, display_height))
+    # Step 4: Place image on canvas (with bounds checking)
+    # Calculate source and destination regions
+    src_x1 = max(0, -x_pos)
+    src_y1 = max(0, -y_pos)
+    src_x2 = min(img_w, display_width - x_pos)
+    src_y2 = min(img_h, display_height - y_pos)
     
-    # STRICT MASKING: Mask everything outside the projector corners
-    # This ensures we only project where the user defined the table
-    # Apply mask BEFORE rotation/mirroring to match the projector_corners coordinate system
-    if projector_corners is not None:
+    dst_x1 = max(0, x_pos)
+    dst_y1 = max(0, y_pos)
+    dst_x2 = min(display_width, x_pos + img_w)
+    dst_y2 = min(display_height, y_pos + img_h)
+    
+    # Copy the visible portion
+    if src_x2 > src_x1 and src_y2 > src_y1:
+        canvas[dst_y1:dst_y2, dst_x1:dst_x2] = image[src_y1:src_y2, src_x1:src_x2]
+    
+    # Step 5: Apply mirror flip if needed
+    if mirror_flip:
+        canvas = cv2.flip(canvas, 0)  # Vertical flip
+    
+    # Step 6: Apply rotation if needed
+    if sandbox_rotation != 0:
+        if sandbox_rotation == 90:
+            canvas = cv2.rotate(canvas, cv2.ROTATE_90_CLOCKWISE)
+        elif sandbox_rotation == 180:
+            canvas = cv2.rotate(canvas, cv2.ROTATE_180)
+        elif sandbox_rotation == 270:
+            canvas = cv2.rotate(canvas, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    
+    # Step 7: Apply mask if defined
+    if mask_corners is not None and len(mask_corners) == 4:
         mask = np.zeros((display_height, display_width), dtype=np.uint8)
-        pts = np.array(projector_corners, np.int32)
+        pts = np.array(mask_corners, np.int32)
         pts = pts.reshape((-1, 1, 2))
         cv2.fillPoly(mask, [pts], 255)
         
         # Apply mask
-        if len(warped.shape) == 3:
+        if len(canvas.shape) == 3:
             mask_3d = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-            warped = cv2.bitwise_and(warped, mask_3d)
+            canvas = cv2.bitwise_and(canvas, mask_3d)
         else:
-            warped = cv2.bitwise_and(warped, mask)
-
-    # Apply mirror flip if needed (for mirror-based projection)
-    if mirror_flip:
-        warped = cv2.flip(warped, 0)  # Flip vertically (0 = vertical, 1 = horizontal)
+            canvas = cv2.bitwise_and(canvas, mask)
     
-    # Apply rotation if needed
-    if sandbox_rotation != 0:
-        if sandbox_rotation == 90:
-            warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
-        elif sandbox_rotation == 180:
-            warped = cv2.rotate(warped, cv2.ROTATE_180)
-        elif sandbox_rotation == 270:
-            warped = cv2.rotate(warped, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return canvas
+
+def calibrate_sensor_alignment():
+    """Interactive sensor alignment calibration with real-time preview"""
+    global sandbox_rotation, mirror_flip, sensor_scale, sensor_offset_x, sensor_offset_y
+    
+    print("🎯 Sensor Alignment Calibration")
+    print("Align the sensor view with your physical sandbox")
+    print("\nControls:")
+    print("  R: Rotate 90° clockwise")
+    print("  M: Toggle mirror flip")
+    print("  +/-: Scale up/down (0.05 increments)")
+    print("  Arrow keys: Move position (10px increments)")
+    print("  Shift+Arrow: Fine movement (1px increments)")
+    print("  ENTER: Confirm and continue")
+    print("  ESC: Cancel")
+    
+    # Store original values in case of cancel
+    orig_rotation = sandbox_rotation
+    orig_mirror = mirror_flip
+    orig_scale = sensor_scale
+    orig_offset_x = sensor_offset_x
+    orig_offset_y = sensor_offset_y
+    
+    while True:
+        # Get live depth data
+        depth_data = get_kinect_depth()
+        if depth_data is None:
+            print("❌ Cannot get depth data")
+            return False
+        
+        # Create color visualization
+        colored = create_elevation_colors(depth_data)
+        
+        # Apply current transformation settings
+        display = apply_transformation(colored)
+        
+        # Add on-screen info
+        cv2.putText(display, "SENSOR ALIGNMENT", 
+                   (display_width // 2 - 150, 40),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+        
+        # Show current settings
+        y_offset = 80
+        settings_text = [
+            f"Rotation: {sandbox_rotation}°",
+            f"Mirror: {'ON' if mirror_flip else 'OFF'}",
+            f"Scale: {sensor_scale:.2f}x",
+            f"Offset: ({sensor_offset_x}, {sensor_offset_y})"
+        ]
+        
+        for i, text in enumerate(settings_text):
+            cv2.putText(display, text, (30, y_offset + i * 35),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        # Controls help
+        cv2.putText(display, "R: Rotate | M: Mirror | +/-: Scale | Arrows: Move | ENTER: Confirm | ESC: Cancel", 
+                   (10, display_height - 20),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        cv2.imshow('AR Sandbox - Contour Lines', display)
+        
+        # Get key input
+        key_full = cv2.waitKey(1)
+        key = key_full & 0xFF
+        
+        if key == 27:  # ESC - Cancel
+            # Restore original values
+            sandbox_rotation = orig_rotation
+            mirror_flip = orig_mirror
+            sensor_scale = orig_scale
+            sensor_offset_x = orig_offset_x
+            sensor_offset_y = orig_offset_y
+            print("❌ Sensor alignment cancelled")
+            return False
             
-    return warped
-
-def calibrate_sandbox():
-    """Interactive sandbox dimension calibration"""
-    global sandbox_corners
+        elif key == 13:  # ENTER - Confirm
+            print("✅ Sensor alignment confirmed")
+            print(f"   Rotation: {sandbox_rotation}°")
+            print(f"   Mirror: {'ON' if mirror_flip else 'OFF'}")
+            print(f"   Scale: {sensor_scale:.2f}x")
+            print(f"   Offset: ({sensor_offset_x}, {sensor_offset_y})")
+            return True
+            
+        elif key == ord('r') or key == ord('R'):  # Rotate
+            sandbox_rotation = (sandbox_rotation + 90) % 360
+            print(f"🔄 Rotation: {sandbox_rotation}°")
+            
+        elif key == ord('m') or key == ord('M'):  # Mirror
+            mirror_flip = not mirror_flip
+            print(f"🪞 Mirror: {'ON' if mirror_flip else 'OFF'}")
+            
+        elif key == ord('+') or key == ord('='):  # Scale up
+            sensor_scale = min(3.0, sensor_scale + 0.05)
+            print(f"🔍 Scale: {sensor_scale:.2f}x")
+            
+        elif key == ord('-') or key == ord('_'):  # Scale down
+            sensor_scale = max(0.1, sensor_scale - 0.05)
+            print(f"🔍 Scale: {sensor_scale:.2f}x")
+            
+        # Arrow keys for position
+        # Check for shift modifier (fine movement)
+        shift_pressed = (key_full & 0xFF00) != 0
+        step = 1 if shift_pressed else 10
+        
+        if key == 82 or key_full == 65362 or key_full == 2490368:  # UP
+            sensor_offset_y -= step
+            print(f"⬆️  Offset: ({sensor_offset_x}, {sensor_offset_y})")
+        elif key == 84 or key_full == 65364 or key_full == 2621440:  # DOWN
+            sensor_offset_y += step
+            print(f"⬇️  Offset: ({sensor_offset_x}, {sensor_offset_y})")
+        elif key == 81 or key_full == 65361 or key_full == 2424832:  # LEFT
+            sensor_offset_x -= step
+            print(f"⬅️  Offset: ({sensor_offset_x}, {sensor_offset_y})")
+        elif key == 83 or key_full == 65363 or key_full == 2555904:  # RIGHT
+            sensor_offset_x += step
+            print(f"➡️  Offset: ({sensor_offset_x}, {sensor_offset_y})")
     
-    # Get current depth data for background
+    return False
+
+def calibrate_mask():
+    """Interactive mask calibration - define table boundary"""
+    global mask_corners
+    
+    print("🎯 Table Mask Calibration")
+    print("Click 4 corners to define the table boundary")
+    print("Everything outside will be masked (black)")
+    print("\nControls:")
+    print("  Click: Select corner")
+    print("  C: Clear all corners")
+    print("  ENTER: Confirm")
+    print("  ESC: Cancel")
+    
+    # Get live depth data for background
     depth_data = get_kinect_depth()
     if depth_data is None:
-        print("❌ Cannot get depth data for calibration")
+        print("❌ Cannot get depth data")
         return False
     
-    # Create color visualization
+    # Create color visualization and apply transformation
     colored = create_elevation_colors(depth_data)
-    colored = cv2.resize(colored, (display_width, display_height))
+    base_display = apply_transformation(colored)
     
     corners = []
     corner_labels = ["TL", "TR", "BR", "BL"]
-    corner_instructions = [
-        "Click TOP-LEFT corner",
-        "Click TOP-RIGHT corner", 
-        "Click BOTTOM-RIGHT corner",
-        "Click BOTTOM-LEFT corner"
-    ]
     
-    # Mouse callback for corner selection (defined once)
+    # Mouse callback for corner selection
     def mouse_callback(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN and len(corners) < 4:
             corners.append((x, y))
             print(f"✅ Corner {len(corners)}: ({x}, {y})")
     
-    # Set mouse callback once before the loop
     cv2.setMouseCallback('AR Sandbox - Contour Lines', mouse_callback)
     
     while True:
-        # Create copy for drawing
-        display = colored.copy()
-        
-        # Draw on-screen instructions
-        current_step = len(corners)
-        if current_step < 4:
-            # Main instruction
-            cv2.putText(display, corner_instructions[current_step], 
-                       (display_width // 2 - 150, 50),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
-            
-            # Progress indicator
-            cv2.putText(display, f"Corner {current_step + 1} of 4", 
-                       (display_width // 2 - 80, 90),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            
-            # Corner status list
-            for i in range(4):
-                if i < current_step:
-                    # Completed corner
-                    cv2.putText(display, f"✓ {corner_labels[i]}", 
-                               (30, 150 + i * 40),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                elif i == current_step:
-                    # Current corner
-                    cv2.putText(display, f"→ {corner_labels[i]}", 
-                               (30, 150 + i * 40),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                else:
-                    # Pending corner
-                    cv2.putText(display, f"  {corner_labels[i]}", 
-                               (30, 150 + i * 40),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 100, 100), 2)
+        # Refresh display with live data
+        depth_data = get_kinect_depth()
+        if depth_data is not None:
+            colored = create_elevation_colors(depth_data)
+            display = apply_transformation(colored)
         else:
-            # All corners selected
-            cv2.putText(display, "Press ENTER to confirm or ESC to cancel", 
-                       (display_width // 2 - 200, 50),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
+            display = base_display.copy()
         
-        # Control instructions
-        cv2.putText(display, "Click to select | C: Clear | ESC: Cancel | ENTER: Confirm", 
-                   (10, display_height - 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        # Add title
+        cv2.putText(display, "TABLE MASK CALIBRATION", 
+                   (display_width // 2 - 200, 40),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+        
+        # Show instructions
+        if len(corners) < 4:
+            cv2.putText(display, f"Click corner {len(corners) + 1} of 4", 
+                       (display_width // 2 - 100, 80),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+        else:
+            cv2.putText(display, "Press ENTER to confirm or ESC to cancel", 
+                       (display_width // 2 - 250, 80),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
         
         # Draw existing corners
         for i, corner in enumerate(corners):
-            cv2.circle(display, corner, 8, (0, 255, 255), -1)
-            cv2.putText(display, corner_labels[i], (corner[0] + 10, corner[1] - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.circle(display, corner, 10, (0, 255, 255), -1)
+            cv2.putText(display, corner_labels[i], (corner[0] + 15, corner[1] - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
         # Draw lines between corners
         if len(corners) >= 2:
             for i in range(len(corners)):
                 next_i = (i + 1) % len(corners)
-                cv2.line(display, corners[i], corners[next_i], (0, 255, 0), 2)
+                if next_i < len(corners):
+                    cv2.line(display, corners[i], corners[next_i], (0, 255, 0), 2)
+        
+        # Fill polygon if 4 corners selected (preview)
+        if len(corners) == 4:
+            overlay = display.copy()
+            pts = np.array(corners, np.int32)
+            pts = pts.reshape((-1, 1, 2))
+            cv2.fillPoly(overlay, [pts], (0, 255, 0))
+            display = cv2.addWeighted(display, 0.7, overlay, 0.3, 0)
+        
+        # Controls help
+        cv2.putText(display, "Click: Select | C: Clear | ENTER: Confirm | ESC: Cancel", 
+                   (10, display_height - 20),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
         cv2.imshow('AR Sandbox - Contour Lines', display)
         
         key = cv2.waitKey(1) & 0xFF
         
         if key == 27:  # ESC
-            print("❌ Calibration cancelled")
+            print("❌ Mask calibration cancelled")
             return False
-        elif key == ord('c'):  # Clear
+        elif key == ord('c') or key == ord('C'):  # Clear
             corners = []
             print("🗑️  Corners cleared")
-        elif key == 13 and len(corners) == 4:  # Enter
-            # Scale corners back to original image size
-            height, width = depth_data.shape
-            scale_x = width / display_width
-            scale_y = height / display_height
-            
-            sandbox_corners = [
-                (int(corners[0][0] * scale_x), int(corners[0][1] * scale_y)),  # Top-left
-                (int(corners[1][0] * scale_x), int(corners[1][1] * scale_y)),  # Top-right
-                (int(corners[2][0] * scale_x), int(corners[2][1] * scale_y)),  # Bottom-right
-                (int(corners[3][0] * scale_x), int(corners[3][1] * scale_y))   # Bottom-left
-            ]
-            
-            print(f"✅ Sandbox corners calibrated: {sandbox_corners}")
+        elif key == 13 and len(corners) == 4:  # ENTER
+            mask_corners = corners.copy()
+            print(f"✅ Mask corners set: {mask_corners}")
             return True
     
-    # Don't destroy window - keep it for next calibration step
     return False
 
-def create_alignment_pattern(width, height):
-    """Create a distinctive alignment pattern for projection calibration"""
-    pattern = np.zeros((height, width, 3), dtype=np.uint8)
-    
-    # Add grid pattern (subtle) - scale with resolution
-    grid_spacing = max(40, min(width, height) // 16)
-    grid_color = (50, 50, 50)  # Dark gray grid
-    for i in range(0, width, grid_spacing):
-        cv2.line(pattern, (i, 0), (i, height), grid_color, 1)
-    for i in range(0, height, grid_spacing):
-        cv2.line(pattern, (0, i), (width, i), grid_color, 1)
-    
-    # Add corner crosshairs (very visible) - scale with resolution
-    crosshair_color = (0, 255, 255)  # Yellow crosshairs
-    crosshair_size = max(30, min(width, height) // 20)
-    
-    # Corner positions (will be updated during calibration)
-    corner_positions = [
-        (width // 4, height // 4),      # Top-left
-        (3 * width // 4, height // 4),   # Top-right
-        (3 * width // 4, 3 * height // 4), # Bottom-right
-        (width // 4, 3 * height // 4)    # Bottom-left
-    ]
-    
-    for x, y in corner_positions:
-        # Draw crosshair
-        cv2.line(pattern, (x - crosshair_size, y), (x + crosshair_size, y), crosshair_color, 3)
-        cv2.line(pattern, (x, y - crosshair_size), (x, y + crosshair_size), crosshair_color, 3)
-        cv2.circle(pattern, (x, y), 5, crosshair_color, -1)
-    
-    # Add center marker - scale with resolution
-    center_x, center_y = width // 2, height // 2
-    center_radius = max(10, min(width, height) // 60)
-    cv2.circle(pattern, (center_x, center_y), center_radius, (255, 0, 255), 2)  # Magenta center
-    
-    # Add border - scale with resolution
-    border_margin = max(10, min(width, height) // 64)
-    cv2.rectangle(pattern, (border_margin, border_margin), 
-                 (width - border_margin, height - border_margin), (255, 255, 255), 2)
-    
-    # Add resolution info
-    font_scale = max(0.5, min(width, height) / 1000)
-    cv2.putText(pattern, f"{width}x{height}", (10, height - 10), 
-               cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1)
-    
-    return pattern
 
 def calibrate_projection_alignment():
     """Calibrate projection to align with physical sandbox"""
@@ -580,10 +620,6 @@ def calibrate_projection_alignment():
             next_i = (i + 1) % 4
             cv2.line(display, tuple(corner), tuple(working_corners[next_i]), color, 2)
         
-        # Apply mirror flip to display if needed so user sees what is projected
-        if mirror_flip:
-            display = cv2.flip(display, 0)
-            
         # Add on-screen instructions with semi-transparent background for better readability
         # Main instruction
         cv2.putText(display, "PROJECTION ALIGNMENT", 
@@ -655,24 +691,24 @@ def calibrate_projection_alignment():
 
 
 def run_unified_calibration():
-    """Run complete calibration system (sandbox + depth thresholds + projection alignment)"""
+    """Run complete simplified calibration system"""
     # Show calibration start screen
     start_screen = np.zeros((display_height, display_width, 3), dtype=np.uint8)
     
-    cv2.putText(start_screen, "UNIFIED CALIBRATION MODE", 
-               (display_width // 2 - 200, display_height // 3),
+    cv2.putText(start_screen, "SIMPLIFIED CALIBRATION MODE", 
+               (display_width // 2 - 250, display_height // 3),
                cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
     
     cv2.putText(start_screen, "This will guide you through 3 steps:", 
                (display_width // 2 - 180, display_height // 3 + 60),
                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     
-    cv2.putText(start_screen, "1. Sandbox Dimensions - Click 4 corners", 
-               (display_width // 2 - 200, display_height // 3 + 120),
+    cv2.putText(start_screen, "1. Sensor Alignment - Rotate, mirror, scale, position", 
+               (display_width // 2 - 250, display_height // 3 + 120),
                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
     
-    cv2.putText(start_screen, "2. Projection Alignment - Align with physical sandbox", 
-               (display_width // 2 - 250, display_height // 3 + 160),
+    cv2.putText(start_screen, "2. Table Mask - Define projection boundary", 
+               (display_width // 2 - 220, display_height // 3 + 160),
                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
     
     cv2.putText(start_screen, "3. Depth Thresholds - Set color boundaries", 
@@ -686,14 +722,14 @@ def run_unified_calibration():
     cv2.imshow('AR Sandbox - Contour Lines', start_screen)
     cv2.waitKey(0)
     
-    # Step 1: Sandbox dimension calibration
-    if not calibrate_sandbox():
-        print("⚠️  Sandbox calibration skipped")
+    # Step 1: Sensor alignment
+    if not calibrate_sensor_alignment():
+        print("⚠️  Sensor alignment skipped")
         return False
     
-    # Step 2: Projection alignment
-    if not calibrate_projection_alignment():
-        print("⚠️  Projection alignment skipped")
+    # Step 2: Table mask
+    if not calibrate_mask():
+        print("⚠️  Table mask skipped")
     
     # Step 3: Depth threshold calibration
     calibrate_kinect()
@@ -715,8 +751,8 @@ def create_ar_overlay(depth_data):
     # Combine colors and contours
     overlay = cv2.addWeighted(colors, 0.7, cv2.cvtColor(contours, cv2.COLOR_GRAY2BGR), 0.3, 0)
     
-    # Apply sandbox transformation if calibrated
-    overlay = apply_sandbox_transformation(overlay)
+    # Apply transformation
+    overlay = apply_transformation(overlay)
     
     return overlay
 
@@ -734,7 +770,6 @@ def run_realtime_sandbox():
     print("  Press 'f' to toggle fullscreen")
     print("  Press 'v' to toggle mirror flip (for mirror projection)")
     print("  Press 'm' to enter full calibration mode")
-    print("  Press 'a' for quick projection alignment")
     print("  Press 'r' to rotate projection (90° increments)")
     print(f"  Auto-detected resolution: {display_width}x{display_height}")
     
@@ -769,11 +804,11 @@ def run_realtime_sandbox():
                 display_img = create_ar_overlay(depth_data)
             elif mode == 'contours':
                 contours_img = cv2.cvtColor(process_depth_to_contours(depth_data), cv2.COLOR_GRAY2BGR)
-                contours_img = apply_sandbox_transformation(contours_img)
+                contours_img = apply_transformation(contours_img)
                 display_img = contours_img
             else:  # colors
                 colors_img = create_elevation_colors(depth_data)
-                colors_img = apply_sandbox_transformation(colors_img)
+                colors_img = apply_transformation(colors_img)
                 display_img = colors_img
             
             # Resize for display
@@ -874,31 +909,10 @@ def run_realtime_sandbox():
                     fullscreen = True
                     fullscreen_mode = True
                     print("🖥️  Restored fullscreen mode")
-                # Recreate mask after calibration
-                if sandbox_corners is not None:
-                    depth_data = get_kinect_depth()
-                    if depth_data is not None:
-                        create_sandbox_mask(sandbox_corners, depth_data.shape)
             elif key == ord('r'):
                 sandbox_rotation = (sandbox_rotation + 90) % 360
                 print(f"🔄 Rotation: {sandbox_rotation}°")
                 save_calibration()  # Save rotation change
-            elif key == ord('a'):
-                print("🎯 Quick projection alignment...")
-                # Save current fullscreen state
-                was_fullscreen = fullscreen
-                if calibrate_projection_alignment():
-                    save_calibration()
-                    # Recreate mask after alignment
-                    if sandbox_corners is not None:
-                        depth_data = get_kinect_depth()
-                        if depth_data is not None:
-                            create_sandbox_mask(sandbox_corners, depth_data.shape)
-                # Restore fullscreen state after alignment
-                if was_fullscreen:
-                    cv2.setWindowProperty('AR Sandbox - Contour Lines', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-                    fullscreen = True
-                    fullscreen_mode = True
             elif key == ord('v'):
                 mirror_flip = not mirror_flip
                 print(f"🪞 Mirror flip {'enabled' if mirror_flip else 'disabled'}")

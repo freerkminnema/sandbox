@@ -1,45 +1,13 @@
 {
-  "sandbox_corners": [
-    [
-      215,
-      90
-    ],
-    [
-      507,
-      114
-    ],
-    [
-      495,
-      394
-    ],
-    [
-      201,
-      382
-    ]
-  ],
-  "projector_corners": [
-    [
-      210,
-      55
-    ],
-    [
-      954,
-      50
-    ],
-    [
-      959,
-      720
-    ],
-    [
-      210,
-      720
-    ]
-  ],
-  "rotation": 270,
-  "mirror_flip": false,
+  "rotation": 180,
+  "mirror_flip": true,
+  "sensor_scale": 1.0,
+  "sensor_offset_x": 0,
+  "sensor_offset_y": 0,
+  "mask_corners": null,
   "depth_thresholds": {
-    "white_brown": 803,
-    "brown_green": 804,
-    "green_blue": 800
+    "white_brown": 805,
+    "brown_green": 805,
+    "green_blue": 805
   }
 }
