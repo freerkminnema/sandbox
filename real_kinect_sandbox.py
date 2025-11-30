@@ -430,18 +430,26 @@ def calibrate_sensor_alignment():
         shift_pressed = (key_full & 0xFF00) != 0
         step = 1 if shift_pressed else 10
         
-        if key == 82 or key_full == 65362 or key_full == 2490368:  # UP
+        # Arrow key detection - try multiple methods for cross-platform compatibility
+        # UP arrow
+        if key_full == 2490368 or key_full == 65362 or key == 82 or key == 0:
             sensor_offset_y -= step
             print(f"⬆️  Offset: ({sensor_offset_x}, {sensor_offset_y})")
-        elif key == 84 or key_full == 65364 or key_full == 2621440:  # DOWN
+        # DOWN arrow
+        elif key_full == 2621440 or key_full == 65364 or key == 84 or key == 1:
             sensor_offset_y += step
             print(f"⬇️  Offset: ({sensor_offset_x}, {sensor_offset_y})")
-        elif key == 81 or key_full == 65361 or key_full == 2424832:  # LEFT
+        # LEFT arrow
+        elif key_full == 2424832 or key_full == 65361 or key == 81 or key == 2:
             sensor_offset_x -= step
             print(f"⬅️  Offset: ({sensor_offset_x}, {sensor_offset_y})")
-        elif key == 83 or key_full == 65363 or key_full == 2555904:  # RIGHT
+        # RIGHT arrow
+        elif key_full == 2555904 or key_full == 65363 or key == 83 or key == 3:
             sensor_offset_x += step
             print(f"➡️  Offset: ({sensor_offset_x}, {sensor_offset_y})")
+        # Debug: print key codes if not recognized
+        elif key != 255 and key != 0:
+            print(f"Debug: key={key}, key_full={key_full}")
     
     return False
 
