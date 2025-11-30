@@ -329,7 +329,7 @@ def apply_transformation(image):
 
 def calibrate_sensor_alignment():
     """Interactive sensor alignment calibration with real-time preview"""
-    global sandbox_rotation, mirror_flip, sensor_scale, sensor_offset_x, sensor_offset_y
+    global sandbox_rotation, mirror_flip, sensor_scale, sensor_offset_x, sensor_offset_y, mask_corners
     
     print("🎯 Sensor Alignment Calibration")
     print("Align the sensor view with your physical sandbox")
@@ -348,6 +348,11 @@ def calibrate_sensor_alignment():
     orig_scale = sensor_scale
     orig_offset_x = sensor_offset_x
     orig_offset_y = sensor_offset_y
+    orig_mask = mask_corners
+    
+    # Clear mask during sensor alignment so user can see full view
+    mask_corners = None
+    print("ℹ️  Mask temporarily cleared for alignment")
     
     while True:
         # Get live depth data
@@ -398,10 +403,12 @@ def calibrate_sensor_alignment():
             sensor_scale = orig_scale
             sensor_offset_x = orig_offset_x
             sensor_offset_y = orig_offset_y
+            mask_corners = orig_mask  # Restore original mask
             print("❌ Sensor alignment cancelled")
             return False
             
         elif key == 13:  # ENTER - Confirm
+            # Keep mask cleared - will be set in next calibration step
             print("✅ Sensor alignment confirmed")
             print(f"   Rotation: {sandbox_rotation}°")
             print(f"   Mirror: {'ON' if mirror_flip else 'OFF'}")
