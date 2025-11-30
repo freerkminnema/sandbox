@@ -407,8 +407,19 @@ def calibrate_sensor_alignment():
             print("❌ Sensor alignment cancelled")
             return False
             
+        elif key == ord('s'):  # Skip
+            # Restore original values
+            sandbox_rotation = orig_rotation
+            mirror_flip = orig_mirror
+            sensor_scale = orig_scale
+            sensor_offset_x = orig_offset_x
+            sensor_offset_y = orig_offset_y
+            mask_corners = orig_mask  # Restore original mask
+            print("⏭️  Skipping sensor alignment (keeping previous values)")
+            return True
+            
         elif key == 13:  # ENTER - Confirm
-            # Keep mask cleared - will be set in next calibration step
+            mask_corners = orig_mask  # Restore mask (will be updated in next step if not skipped)
             print("✅ Sensor alignment confirmed")
             print(f"   Rotation: {sandbox_rotation}°")
             print(f"   Mirror: {'ON' if mirror_flip else 'OFF'}")
@@ -540,7 +551,7 @@ def calibrate_mask():
             display = cv2.addWeighted(display, 0.7, overlay, 0.3, 0)
         
         # Controls help
-        cv2.putText(display, "Click: Select | C: Clear | ENTER: Confirm | ESC: Cancel", 
+        cv2.putText(display, "Click: Select | C: Clear | S: Skip | ENTER: Confirm | ESC: Cancel", 
                    (10, display_height - 20),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
@@ -554,6 +565,9 @@ def calibrate_mask():
         elif key == ord('c') or key == ord('C'):  # Clear
             corners = []
             print("🗑️  Corners cleared")
+        elif key == ord('s') or key == ord('S'):  # Skip
+            print("⏭️  Skipping mask calibration (keeping previous mask)")
+            return True
         elif key == 13 and len(corners) == 4:  # ENTER
             mask_corners = corners.copy()
             print(f"✅ Mask corners set: {mask_corners}")
@@ -727,6 +741,10 @@ def run_unified_calibration():
     cv2.putText(start_screen, "3. Depth Thresholds - Set color boundaries", 
                (display_width // 2 - 220, display_height // 3 + 200),
                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+    
+    cv2.putText(start_screen, "Press 'S' to skip any step during calibration", 
+               (display_width // 2 - 220, display_height // 3 + 240),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
     
     cv2.putText(start_screen, "Press any key to begin...", 
                (display_width // 2 - 120, display_height // 2 + 120),
@@ -971,9 +989,8 @@ def calibrate_kinect():
         for step_idx, (boundary_name, description) in enumerate(calibration_steps):
             print(f"\n📍 Step {step_idx + 1}: {boundary_name}")
             print(f"   Position surface at {description}")
-            print(f"   Press 'c' to capture, 'q' to quit")
+            print(f"   Press 'c' to capture, 's' to skip, 'q' to quit")
             print(f"   Use arrow keys to adjust threshold in real-time")
-            print(f"   Debug: Raw (0-2047) | Status")
             
             captured = False
             while not captured:
@@ -982,7 +999,7 @@ def calibrate_kinect():
                     # Create color visualization with current thresholds
                     colored = create_elevation_colors_with_thresholds(depth, temp_thresholds[0], temp_thresholds[1], temp_thresholds[2])
                     
-                    # Highlight center calibration region
+                    # Highlight center calibration region ON RAW IMAGE
                     height, width = depth.shape
                     center_x, center_y = width // 2, height // 2
                     region_size = min(width, height) // 8
@@ -993,115 +1010,104 @@ def calibrate_kinect():
                     y2 = min(height, center_y + region_size)
                     
                     # Calculate current depth at absolute center point
-                    center_x = width // 2
-                    center_y = height // 2
                     current_depth = depth[center_y, center_x]
 
                     # Check if depth is invalid
                     is_invalid = current_depth == 0 or current_depth == 2047
 
                     # Draw rectangle around calibration region (red if invalid, yellow if valid)
-                    rect_color = (0, 0, 255) if is_invalid else (255, 255, 0)  # Red for invalid, yellow for valid
+                    rect_color = (0, 0, 255) if is_invalid else (255, 255, 0)
                     cv2.rectangle(colored, (x1, y1), (x2, y2), rect_color, 3)
+                    
+                    # Draw crosshair at absolute center point
+                    crosshair_color = (0, 0, 255) if is_invalid else (255, 0, 255)
+                    cv2.drawMarker(colored, (center_x, center_y), crosshair_color, cv2.MARKER_CROSS, 20, 3)
 
-                    # Debug output to console
-                    status = "VALID" if current_depth > 0 and current_depth < 2047 else "INVALID"
-                    print(f"\rRaw: {current_depth:4d} | Status: {status}", end="", flush=True)
+                    # APPLY TRANSFORMATION
+                    display = apply_transformation(colored)
+                    disp_h, disp_w = display.shape[:2]
 
-                    # Show calibration info with better on-screen instructions
+                    # Show calibration info on TRANSFORMED image
                     # Step indicator
-                    cv2.putText(colored, f"DEPTH CALIBRATION - Step {step_idx + 1} of 3", 
-                               (width // 2 - 180, 40),
+                    cv2.putText(display, f"DEPTH CALIBRATION - Step {step_idx + 1} of 3", 
+                               (disp_w // 2 - 180, 40),
                                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3)
                     
                     # Current boundary
-                    cv2.putText(colored, boundary_name, 
-                               (width // 2 - 100, 80),
+                    cv2.putText(display, boundary_name, 
+                               (disp_w // 2 - 100, 80),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
                     
                     # Instructions
-                    cv2.putText(colored, f"Place surface at {description}", 
-                               (width // 2 - 150, 120),
+                    cv2.putText(display, f"Place surface at {description}", 
+                               (disp_w // 2 - 150, 120),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
                     
                     # Current values
-                    cv2.putText(colored, f"Raw depth: {current_depth}", (10, height - 90),
+                    cv2.putText(display, f"Raw depth: {current_depth}", (10, disp_h - 90),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    cv2.putText(colored, f"Threshold: {temp_thresholds[step_idx]}", (10, height - 60),
+                    cv2.putText(display, f"Threshold: {temp_thresholds[step_idx]}", (10, disp_h - 60),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
                     # Status
-                    status_text = "VALID" if current_depth > 0 and current_depth < 2047 else "INVALID"
-                    status_color = (0, 255, 0) if current_depth > 0 and current_depth < 2047 else (0, 0, 255)
-                    cv2.putText(colored, f"Status: {status_text}", (10, height - 30),
+                    status_text = "VALID" if not is_invalid else "INVALID"
+                    status_color = (0, 255, 0) if not is_invalid else (0, 0, 255)
+                    cv2.putText(display, f"Status: {status_text}", (10, disp_h - 30),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
                     
                     # Controls
-                    cv2.putText(colored, "C: Capture | Arrows: Adjust | Q: Quit", 
+                    cv2.putText(display, "C: Capture | S: Skip | Arrows: Adjust | Q: Quit", 
                                (10, 30),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                     
                     # Add color sample squares in top right corner
                     square_size = 40
                     margin = 10
-                    start_x = width - (square_size + margin) * 4
+                    start_x = disp_w - (square_size + margin) * 4
                     start_y = margin
                     
                     # White square
-                    cv2.rectangle(colored, (start_x, start_y), 
+                    cv2.rectangle(display, (start_x, start_y), 
                                  (start_x + square_size, start_y + square_size), 
                                  (255, 255, 255), -1)
-                    cv2.putText(colored, "W", (start_x + 12, start_y + 25),
+                    cv2.putText(display, "W", (start_x + 12, start_y + 25),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
                     
                     # Brown square
-                    cv2.rectangle(colored, (start_x + (square_size + margin), start_y), 
+                    cv2.rectangle(display, (start_x + (square_size + margin), start_y), 
                                  (start_x + (square_size + margin) * 2, start_y + square_size), 
-                                 (19, 69, 139), -1)  # BGR format for brown
-                    cv2.putText(colored, "B", (start_x + (square_size + margin) + 12, start_y + 25),
+                                 (19, 69, 139), -1)
+                    cv2.putText(display, "B", (start_x + (square_size + margin) + 12, start_y + 25),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
                     
                     # Green square
-                    cv2.rectangle(colored, (start_x + (square_size + margin) * 2, start_y), 
+                    cv2.rectangle(display, (start_x + (square_size + margin) * 2, start_y), 
                                  (start_x + (square_size + margin) * 3, start_y + square_size), 
-                                 (34, 139, 34), -1)  # Green works the same in RGB/BGR
-                    cv2.putText(colored, "G", (start_x + (square_size + margin) * 2 + 12, start_y + 25),
+                                 (34, 139, 34), -1)
+                    cv2.putText(display, "G", (start_x + (square_size + margin) * 2 + 12, start_y + 25),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
                     
                     # Blue square
-                    cv2.rectangle(colored, (start_x + (square_size + margin) * 3, start_y), 
+                    cv2.rectangle(display, (start_x + (square_size + margin) * 3, start_y), 
                                  (start_x + (square_size + margin) * 4, start_y + square_size), 
-                                 (200, 100, 0), -1)  # BGR format for blue
-                    cv2.putText(colored, "L", (start_x + (square_size + margin) * 3 + 12, start_y + 25),
+                                 (200, 100, 0), -1)
+                    cv2.putText(display, "L", (start_x + (square_size + margin) * 3 + 12, start_y + 25),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
                     
-                    # Draw crosshair at absolute center point
-                    crosshair_color = (0, 0, 255) if is_invalid else (255, 0, 255)  # Red for invalid, magenta for valid
-                    cv2.drawMarker(colored, (center_x, center_y), crosshair_color, cv2.MARKER_CROSS, 20, 3)
-
-                    # Show depth value or invalid distance text
-                    if is_invalid:
-                        cv2.putText(colored, "INVALID DISTANCE", (center_x + 25, center_y),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-                    else:
-                        cv2.putText(colored, f"{current_depth}", (center_x + 25, center_y),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
-                    
-                    cv2.imshow('AR Sandbox - Contour Lines', colored)
+                    cv2.imshow('AR Sandbox - Contour Lines', display)
                     
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('c'):
                         # Capture absolute center point depth
-                        center_x = width // 2
-                        center_y = height // 2
-                        center_depth = depth[center_y, center_x]
-
+                        center_depth = depth[height // 2, width // 2]
                         captured_depths.append(center_depth)
                         print(f"\n✅ Captured center point: Raw={center_depth}")
                         captured = True
+                    elif key == ord('s'):
+                        print("\n⏭️  Skipping depth calibration")
+                        return
                     elif key == ord('q'):
                         print("❌ Calibration cancelled")
-                        # Don't destroy window - just return
                         return
                     elif key == 81:  # Left arrow
                         temp_thresholds[step_idx] = max(0, temp_thresholds[step_idx] - 5)
@@ -1112,10 +1118,7 @@ def calibrate_kinect():
                         
     except Exception as e:
         print(f"Calibration error: {e}")
-        # Don't destroy window - just return
         return
-    
-    # Don't destroy window - keep it for returning to live view
     
     if len(captured_depths) == 3:
         # Store raw depth values directly as thresholds

@@ -2,29 +2,29 @@
   "rotation": 270,
   "mirror_flip": true,
   "sensor_scale": 2.4499999999999993,
-  "sensor_offset_x": -50,
-  "sensor_offset_y": -30,
+  "sensor_offset_x": -40,
+  "sensor_offset_y": -50,
   "mask_corners": [
     [
-      199,
-      8
+      183,
+      15
     ],
     [
-      918,
-      11
+      1005,
+      21
     ],
     [
-      906,
-      711
+      1042,
+      696
     ],
     [
-      137,
-      679
+      155,
+      671
     ]
   ],
   "depth_thresholds": {
-    "white_brown": 773,
-    "brown_green": 794,
-    "green_blue": 812
+    "white_brown": 770,
+    "brown_green": 783,
+    "green_blue": 810
   }
 }
