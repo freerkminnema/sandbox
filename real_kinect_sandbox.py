@@ -48,7 +48,7 @@ class Fish:
         if fish_type == 'whale':
             self.size = 5 # Reduced to 20% of 25
             self.color = (255, 200, 200) # Light Blue/Grey (BGR)
-            self.base_speed = 0.8
+            self.base_speed = 0.2 # Was 0.8
             
             if immediate:
                 self.respawn_timer = 0
@@ -64,7 +64,7 @@ class Fish:
         elif fish_type == 'mermaid':
             self.size = 8
             self.color = (180, 105, 255) # Hot Pink/Purple (BGR)
-            self.base_speed = 2.0
+            self.base_speed = 0.5 # Was 2.0
             
             if immediate:
                 self.respawn_timer = 0
@@ -80,7 +80,7 @@ class Fish:
         else: # 'fish'
             self.size = 2 # Even smaller fish
             self.color = (0, 165, 255) # Orange
-            self.base_speed = 1.5
+            self.base_speed = 0.375 # Was 1.5
             self.active = False
             self.respawn()
 
@@ -131,29 +131,29 @@ class Fish:
             if self.type == 'whale':
                 # Whale moves smoothly, rarely changes direction
                 if np.random.random() < 0.005:
-                    self.vx += np.random.uniform(-0.2, 0.2)
-                    self.vy += np.random.uniform(-0.2, 0.2)
+                    self.vx += np.random.uniform(-0.05, 0.05) # Reduced from 0.2
+                    self.vy += np.random.uniform(-0.05, 0.05)
             elif self.type == 'mermaid':
                 # Mermaid moves fast and graceful (sinusoidal-ish)
                 if np.random.random() < 0.05:
-                    self.vx += np.random.uniform(-0.5, 0.5)
-                    self.vy += np.random.uniform(-0.5, 0.5)
+                    self.vx += np.random.uniform(-0.125, 0.125) # Reduced from 0.5
+                    self.vy += np.random.uniform(-0.125, 0.125)
             else:
                 # Fish move erratically
                 if np.random.random() < 0.2:
-                    self.vx += np.random.uniform(-1.0, 1.0)
-                    self.vy += np.random.uniform(-1.0, 1.0)
+                    self.vx += np.random.uniform(-0.25, 0.25) # Reduced from 1.0
+                    self.vy += np.random.uniform(-0.25, 0.25)
             
             # Cap velocity
             speed = np.sqrt(self.vx**2 + self.vy**2)
             if self.type == 'whale':
-                max_speed = 1.5
+                max_speed = 0.375 # Was 1.5
             elif self.type == 'mermaid':
-                max_speed = 3.0
+                max_speed = 0.75 # Was 3.0
             else:
-                max_speed = 2.5
+                max_speed = 0.625 # Was 2.5
             
-            min_speed = 0.5
+            min_speed = 0.125 # Was 0.5
             
             if speed > max_speed:
                 scale = max_speed / speed
@@ -168,16 +168,12 @@ class Fish:
         else:
             # Hit land or boundaries of water
             if self.active:
-                if self.type == 'whale' or self.type == 'mermaid':
-                    # Whale/Mermaid dives/despawns when hitting land
-                    self.active = False
-                    self.respawn_timer = np.random.randint(200, 800) # Gone for a while
-                else:
-                    # Fish bounce
-                    self.vx *= -1
-                    self.vy *= -1
-                    self.x += self.vx
-                    self.y += self.vy
+                # Bounce back (for all types now)
+                self.vx *= -1
+                self.vy *= -1
+                # Move slightly away from collision
+                self.x += self.vx
+                self.y += self.vy
             else:
                 # Respawn if stuck on land (trying to spawn)
                 self.respawn()
@@ -1068,21 +1064,22 @@ def run_realtime_sandbox():
             if frame_count > 0:
                 fps = frame_count / (time.time() - start_time + 0.001)
             
-            # Add info text
-            cv2.putText(display_img, f"FPS: {fps:.1f}", (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            
-            mode_text = f"Mode: {mode} | {'Kinect' if KINECT_AVAILABLE else 'Simulation'}"
-            cv2.putText(display_img, mode_text, (10, 70), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            
-            # Show mirror flip status
-            if mirror_flip:
-                cv2.putText(display_img, "Mirror: ON", (10, 110), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            
-            # Debug info
+            # Debug info and HUD
             if debug_mode:
+                # FPS
+                cv2.putText(display_img, f"FPS: {fps:.1f}", (10, 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+                # Mode
+                mode_text = f"Mode: {mode} | {'Kinect' if KINECT_AVAILABLE else 'Simulation'}"
+                cv2.putText(display_img, mode_text, (10, 70), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                
+                # Mirror status
+                if mirror_flip:
+                    cv2.putText(display_img, "Mirror: ON", (10, 110), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
                 # Get center depth value
                 height, width = depth_data.shape
                 center_x, center_y = width // 2, height // 2
@@ -1112,6 +1109,18 @@ def run_realtime_sandbox():
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                 cv2.putText(display_img, debug_text3, (10, debug_y_start + 50), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+                           
+                # Creature counts
+                fish_count = sum(1 for f in fishes if f.type == 'fish')
+                whale_count = sum(1 for f in fishes if f.type == 'whale')
+                mermaid_count = sum(1 for f in fishes if f.type == 'mermaid')
+                active_fish = sum(1 for f in fishes if f.type == 'fish' and f.active)
+                active_whale = sum(1 for f in fishes if f.type == 'whale' and f.active)
+                active_mermaid = sum(1 for f in fishes if f.type == 'mermaid' and f.active)
+                
+                creature_text = f"Creatures (Active/Total): Fish:{active_fish}/{fish_count} Whales:{active_whale}/{whale_count} Mermaids:{active_mermaid}/{mermaid_count}"
+                cv2.putText(display_img, creature_text, (10, debug_y_start + 80), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 200), 2)
                 
                 # Draw crosshair at center
                 cv2.drawMarker(display_img, (center_x, center_y), (0, 255, 255), cv2.MARKER_CROSS, 20, 2)
