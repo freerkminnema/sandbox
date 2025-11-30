@@ -264,27 +264,38 @@ def create_elevation_colors_with_thresholds(depth_data, white_brown_thresh, brow
     return colored
 
 def apply_transformation(image):
-    """Apply simplified transformation: scale, translate, rotate, flip, and mask"""
+    """Apply simplified transformation: rotate, flip, scale, translate, and mask"""
     global sandbox_rotation, mirror_flip, sensor_scale, sensor_offset_x, sensor_offset_y, mask_corners
     
-    # Get original dimensions
-    height, width = image.shape[:2]
+    # Step 1: Apply rotation to sensor image first (before scaling/positioning)
+    if sandbox_rotation != 0:
+        if sandbox_rotation == 90:
+            image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+        elif sandbox_rotation == 180:
+            image = cv2.rotate(image, cv2.ROTATE_180)
+        elif sandbox_rotation == 270:
+            image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
     
-    # Step 1: Scale the image
+    # Step 2: Apply mirror flip to sensor image
+    if mirror_flip:
+        image = cv2.flip(image, 0)  # Vertical flip
+    
+    # Step 3: Scale the image
+    height, width = image.shape[:2]
     if sensor_scale != 1.0:
         new_width = int(width * sensor_scale)
         new_height = int(height * sensor_scale)
         image = cv2.resize(image, (new_width, new_height))
     
-    # Step 2: Create canvas at display resolution
+    # Step 4: Create canvas at display resolution
     canvas = np.zeros((display_height, display_width, 3) if len(image.shape) == 3 else (display_height, display_width), dtype=np.uint8)
     
-    # Step 3: Calculate position with offset (centered by default)
+    # Step 5: Calculate position with offset (centered by default)
     img_h, img_w = image.shape[:2]
     x_pos = (display_width - img_w) // 2 + sensor_offset_x
     y_pos = (display_height - img_h) // 2 + sensor_offset_y
     
-    # Step 4: Place image on canvas (with bounds checking)
+    # Step 6: Place image on canvas (with bounds checking)
     # Calculate source and destination regions
     src_x1 = max(0, -x_pos)
     src_y1 = max(0, -y_pos)
@@ -299,19 +310,6 @@ def apply_transformation(image):
     # Copy the visible portion
     if src_x2 > src_x1 and src_y2 > src_y1:
         canvas[dst_y1:dst_y2, dst_x1:dst_x2] = image[src_y1:src_y2, src_x1:src_x2]
-    
-    # Step 5: Apply mirror flip if needed
-    if mirror_flip:
-        canvas = cv2.flip(canvas, 0)  # Vertical flip
-    
-    # Step 6: Apply rotation if needed
-    if sandbox_rotation != 0:
-        if sandbox_rotation == 90:
-            canvas = cv2.rotate(canvas, cv2.ROTATE_90_CLOCKWISE)
-        elif sandbox_rotation == 180:
-            canvas = cv2.rotate(canvas, cv2.ROTATE_180)
-        elif sandbox_rotation == 270:
-            canvas = cv2.rotate(canvas, cv2.ROTATE_90_COUNTERCLOCKWISE)
     
     # Step 7: Apply mask if defined
     if mask_corners is not None and len(mask_corners) == 4:
