@@ -313,6 +313,22 @@ def apply_sandbox_transformation(image):
     # Output size is set to display resolution
     warped = cv2.warpPerspective(image, perspective_matrix, (display_width, display_height))
     
+    # STRICT MASKING: Mask everything outside the projector corners
+    # This ensures we only project where the user defined the table
+    # Apply mask BEFORE rotation/mirroring to match the projector_corners coordinate system
+    if projector_corners is not None:
+        mask = np.zeros((display_height, display_width), dtype=np.uint8)
+        pts = np.array(projector_corners, np.int32)
+        pts = pts.reshape((-1, 1, 2))
+        cv2.fillPoly(mask, [pts], 255)
+        
+        # Apply mask
+        if len(warped.shape) == 3:
+            mask_3d = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+            warped = cv2.bitwise_and(warped, mask_3d)
+        else:
+            warped = cv2.bitwise_and(warped, mask)
+
     # Apply mirror flip if needed (for mirror-based projection)
     if mirror_flip:
         warped = cv2.flip(warped, 0)  # Flip vertically (0 = vertical, 1 = horizontal)
@@ -325,7 +341,7 @@ def apply_sandbox_transformation(image):
             warped = cv2.rotate(warped, cv2.ROTATE_180)
         elif sandbox_rotation == 270:
             warped = cv2.rotate(warped, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    
+            
     return warped
 
 def calibrate_sandbox():
@@ -564,11 +580,21 @@ def calibrate_projection_alignment():
             next_i = (i + 1) % 4
             cv2.line(display, tuple(corner), tuple(working_corners[next_i]), color, 2)
         
+        # Apply mirror flip to display if needed so user sees what is projected
+        if mirror_flip:
+            display = cv2.flip(display, 0)
+            
         # Add on-screen instructions with semi-transparent background for better readability
         # Main instruction
         cv2.putText(display, "PROJECTION ALIGNMENT", 
                    (display_width // 2 - 150, 40),
                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3)
+        
+        # Mirror warning
+        if mirror_flip:
+             cv2.putText(display, "(MIRROR FLIP ACTIVE - Controls Inverted)", 
+                   (display_width // 2 - 200, 70),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         
         # Current corner indicator
         cv2.putText(display, f"Adjusting: {corner_labels[selected_corner]} corner", 
@@ -612,10 +638,13 @@ def calibrate_projection_alignment():
         elif key == 256 + 9:  # SHIFT+TAB (approximate)
             selected_corner = (selected_corner - 1) % 4
         # Arrow keys - handle both masked and full key codes for cross-platform support
+        # MIRROR AWARE CONTROLS: Invert UP/DOWN if mirror flip is on
         elif key == 82 or key_full == 65362 or key_full == 2490368 or key == 0:  # UP arrow
-            working_corners[selected_corner][1] = max(0, working_corners[selected_corner][1] - 5)
+            step = -5 if not mirror_flip else 5  # Invert if mirrored
+            working_corners[selected_corner][1] = max(0, min(display_height, working_corners[selected_corner][1] + step))
         elif key == 84 or key_full == 65364 or key_full == 2621440 or key == 1:  # DOWN arrow
-            working_corners[selected_corner][1] = min(display_height, working_corners[selected_corner][1] + 5)
+            step = 5 if not mirror_flip else -5  # Invert if mirrored
+            working_corners[selected_corner][1] = max(0, min(display_height, working_corners[selected_corner][1] + step))
         elif key == 81 or key_full == 65361 or key_full == 2424832 or key == 2:  # LEFT arrow
             working_corners[selected_corner][0] = max(0, working_corners[selected_corner][0] - 5)
         elif key == 83 or key_full == 65363 or key_full == 2555904 or key == 3:  # RIGHT arrow
