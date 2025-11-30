@@ -38,6 +38,205 @@ display_width = 1280    # Default to 720p
 display_height = 720    # Default to 720p
 fullscreen_mode = False # Track current display mode
 
+class Fish:
+    def __init__(self, width, height, fish_type='fish', immediate=False):
+        self.width = width
+        self.height = height
+        self.type = fish_type
+        self.respawn_timer = 0
+        
+        if fish_type == 'whale':
+            self.size = 5 # Reduced to 20% of 25
+            self.color = (255, 200, 200) # Light Blue/Grey (BGR)
+            self.base_speed = 0.8
+            
+            if immediate:
+                self.respawn_timer = 0
+                self.respawn()
+            else:
+                # Start with a random delay so it appears unexpectedly
+                self.respawn_timer = np.random.randint(50, 200)
+                self.active = False
+                self.x = 0
+                self.y = 0
+                self.vx = 0
+                self.vy = 0
+        elif fish_type == 'mermaid':
+            self.size = 8
+            self.color = (180, 105, 255) # Hot Pink/Purple (BGR)
+            self.base_speed = 2.0
+            
+            if immediate:
+                self.respawn_timer = 0
+                self.respawn()
+            else:
+                # Rare appearance
+                self.respawn_timer = np.random.randint(100, 500)
+                self.active = False
+                self.x = 0
+                self.y = 0
+                self.vx = 0
+                self.vy = 0
+        else: # 'fish'
+            self.size = 2 # Even smaller fish
+            self.color = (0, 165, 255) # Orange
+            self.base_speed = 1.5
+            self.active = False
+            self.respawn()
+
+    def respawn(self):
+        self.x = np.random.randint(0, self.width)
+        self.y = np.random.randint(0, self.height)
+        self.vx = np.random.uniform(-self.base_speed, self.base_speed)
+        self.vy = np.random.uniform(-self.base_speed, self.base_speed)
+        self.active = False
+
+    def update(self, depth_data, threshold):
+        # Handle respawn timer (for whale/mermaid)
+        if self.respawn_timer > 0:
+            self.respawn_timer -= 1
+            if self.respawn_timer == 0:
+                self.respawn()
+            return
+
+        # Proposed new position
+        new_x = self.x + self.vx
+        new_y = self.y + self.vy
+
+        # Check boundaries
+        hit_boundary = False
+        if new_x < 0 or new_x >= self.width:
+            hit_boundary = True
+            self.vx *= -1
+            new_x = max(0, min(new_x, self.width - 1))
+        if new_y < 0 or new_y >= self.height:
+            hit_boundary = True
+            self.vy *= -1
+            new_y = max(0, min(new_y, self.height - 1))
+
+        # Check if new position is in water (depth >= threshold)
+        ix, iy = int(new_x), int(new_y)
+        ix = max(0, min(ix, self.width - 1))
+        iy = max(0, min(iy, self.height - 1))
+
+        current_depth = depth_data[iy, ix]
+        is_water = current_depth >= threshold and current_depth < 2047
+        
+        if is_water:
+            self.active = True
+            self.x = new_x
+            self.y = new_y
+            
+            # Movement logic
+            if self.type == 'whale':
+                # Whale moves smoothly, rarely changes direction
+                if np.random.random() < 0.005:
+                    self.vx += np.random.uniform(-0.2, 0.2)
+                    self.vy += np.random.uniform(-0.2, 0.2)
+            elif self.type == 'mermaid':
+                # Mermaid moves fast and graceful (sinusoidal-ish)
+                if np.random.random() < 0.05:
+                    self.vx += np.random.uniform(-0.5, 0.5)
+                    self.vy += np.random.uniform(-0.5, 0.5)
+            else:
+                # Fish move erratically
+                if np.random.random() < 0.2:
+                    self.vx += np.random.uniform(-1.0, 1.0)
+                    self.vy += np.random.uniform(-1.0, 1.0)
+            
+            # Cap velocity
+            speed = np.sqrt(self.vx**2 + self.vy**2)
+            if self.type == 'whale':
+                max_speed = 1.5
+            elif self.type == 'mermaid':
+                max_speed = 3.0
+            else:
+                max_speed = 2.5
+            
+            min_speed = 0.5
+            
+            if speed > max_speed:
+                scale = max_speed / speed
+                self.vx *= scale
+                self.vy *= scale
+            elif speed < min_speed:
+                if speed > 0:
+                    scale = min_speed / speed
+                    self.vx *= scale
+                    self.vy *= scale
+
+        else:
+            # Hit land or boundaries of water
+            if self.active:
+                if self.type == 'whale' or self.type == 'mermaid':
+                    # Whale/Mermaid dives/despawns when hitting land
+                    self.active = False
+                    self.respawn_timer = np.random.randint(200, 800) # Gone for a while
+                else:
+                    # Fish bounce
+                    self.vx *= -1
+                    self.vy *= -1
+                    self.x += self.vx
+                    self.y += self.vy
+            else:
+                # Respawn if stuck on land (trying to spawn)
+                self.respawn()
+
+    def draw(self, img):
+        if not self.active:
+            return
+            
+        pt1 = (int(self.x), int(self.y))
+        
+        if self.type == 'mermaid':
+            # Draw Mermaid: Purple head, Green tail
+            # Head
+            cv2.circle(img, pt1, self.size // 2, (200, 200, 255), -1) # Pale face
+            
+            # Tail direction
+            if self.vx != 0 or self.vy != 0:
+                angle = np.arctan2(self.vy, self.vx)
+                
+                # Body/Tail
+                tail_len = self.size * 2.0
+                tail_x = int(self.x - np.cos(angle) * tail_len)
+                tail_y = int(self.y - np.sin(angle) * tail_len)
+                
+                # Green tail triangle
+                tail_width = self.size
+                t1_x = int(tail_x + np.cos(angle + np.pi/2) * tail_width)
+                t1_y = int(tail_y + np.sin(angle + np.pi/2) * tail_width)
+                t2_x = int(tail_x + np.cos(angle - np.pi/2) * tail_width)
+                t2_y = int(tail_y + np.sin(angle - np.pi/2) * tail_width)
+                
+                pts = np.array([pt1, (t1_x, t1_y), (t2_x, t2_y)], np.int32)
+                cv2.fillPoly(img, [pts], (100, 255, 100)) # Green tail
+                
+        else:
+            # Draw body (Fish or Whale)
+            cv2.circle(img, pt1, self.size, self.color, -1)
+            
+            # Draw tail
+            if self.vx != 0 or self.vy != 0:
+                angle = np.arctan2(self.vy, self.vx)
+                tail_len = self.size * 1.5
+                
+                tail_x = int(self.x - np.cos(angle) * tail_len)
+                tail_y = int(self.y - np.sin(angle) * tail_len)
+                
+                tail_width = self.size
+                t1_x = int(tail_x + np.cos(angle + np.pi/2) * tail_width)
+                t1_y = int(tail_y + np.sin(angle + np.pi/2) * tail_width)
+                t2_x = int(tail_x + np.cos(angle - np.pi/2) * tail_width)
+                t2_y = int(tail_y + np.sin(angle - np.pi/2) * tail_width)
+                
+                pts = np.array([pt1, (t1_x, t1_y), (t2_x, t2_y)], np.int32)
+                cv2.fillPoly(img, [pts], self.color)
+                
+                # Whale blowhole effect (simple)
+                if self.type == 'whale' and np.random.random() < 0.05:
+                    cv2.circle(img, pt1, self.size // 3, (255, 255, 255), -1)
+
 def detect_display_resolution():
     """Auto-detect optimal display resolution"""
     global display_width, display_height
@@ -773,7 +972,7 @@ def run_unified_calibration():
     
     return True
 
-def create_ar_overlay(depth_data):
+def create_ar_overlay(depth_data, fishes=None):
     """Create complete AR overlay with contours and colors"""
     # Generate components
     contours = process_depth_to_contours(depth_data)
@@ -781,6 +980,11 @@ def create_ar_overlay(depth_data):
     
     # Combine colors and contours
     overlay = cv2.addWeighted(colors, 0.7, cv2.cvtColor(contours, cv2.COLOR_GRAY2BGR), 0.3, 0)
+    
+    # Draw fishes if provided (before transformation so they align with terrain)
+    if fishes:
+        for fish in fishes:
+            fish.draw(overlay)
     
     # Apply transformation
     overlay = apply_transformation(overlay)
@@ -802,6 +1006,8 @@ def run_realtime_sandbox():
     print("  Press 'v' to toggle mirror flip (for mirror projection)")
     print("  Press 'm' to enter full calibration mode")
     print("  Press 'r' to rotate projection (90° increments)")
+    print("  Press '1' to spawn a Whale 🐋")
+    print("  Press '2' to spawn a Mermaid 🧜‍♀️")
     print(f"  Auto-detected resolution: {display_width}x{display_height}")
     
     if not KINECT_AVAILABLE:
@@ -825,14 +1031,27 @@ def run_realtime_sandbox():
     # Create window
     cv2.namedWindow('AR Sandbox - Contour Lines', cv2.WINDOW_NORMAL)
 
+    # Initialize fishes
+    # We need depth dimensions, usually 640x480 for Kinect v1
+    # We'll initialize them and they will find water or respawn
+    # Initialize fishes, one whale, and one mermaid
+    fishes = [Fish(640, 480, fish_type='fish') for _ in range(15)]
+    fishes.append(Fish(640, 480, fish_type='whale'))
+    fishes.append(Fish(640, 480, fish_type='mermaid'))
+
     try:
         while True:
             # Get depth data
             depth_data = get_kinect_depth()
             
+            # Update fishes
+            if mode == 'combined' or mode == 'colors':
+                for fish in fishes:
+                    fish.update(depth_data, GREEN_BLUE_THRESHOLD)
+
             # Create AR overlay
             if mode == 'combined':
-                display_img = create_ar_overlay(depth_data)
+                display_img = create_ar_overlay(depth_data, fishes)
             elif mode == 'contours':
                 contours_img = cv2.cvtColor(process_depth_to_contours(depth_data), cv2.COLOR_GRAY2BGR)
                 contours_img = apply_transformation(contours_img)
@@ -948,6 +1167,12 @@ def run_realtime_sandbox():
                 mirror_flip = not mirror_flip
                 print(f"🪞 Mirror flip {'enabled' if mirror_flip else 'disabled'}")
                 save_calibration()  # Save mirror flip change
+            elif key == ord('1'):
+                fishes.append(Fish(640, 480, fish_type='whale', immediate=True))
+                print("🐋 Whale spawned!")
+            elif key == ord('2'):
+                fishes.append(Fish(640, 480, fish_type='mermaid', immediate=True))
+                print("🧜‍♀️ Mermaid spawned!")
             
             frame_count += 1
             

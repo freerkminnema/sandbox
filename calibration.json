@@ -25,6 +25,6 @@
   "depth_thresholds": {
     "white_brown": 785,
     "brown_green": 800,
-    "green_blue": 810
+    "green_blue": 805
   }
 }
