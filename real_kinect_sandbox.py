@@ -92,6 +92,21 @@ class Fish:
                 self.y = 0
                 self.vx = 0
                 self.vy = 0
+        elif fish_type == 'dolphin':
+            self.size = 7
+            self.color = (180, 180, 180) # Gray (BGR)
+            self.base_speed = 0.6
+            
+            if immediate:
+                self.respawn_timer = 0
+                self.respawn()
+            else:
+                self.respawn_timer = np.random.randint(50, 200)
+                self.active = False
+                self.x = 0
+                self.y = 0
+                self.vx = 0
+                self.vy = 0
         else: # 'fish'
             self.size = 2 # Even smaller fish
             self.color = (0, 165, 255) # Orange
@@ -138,8 +153,8 @@ class Fish:
         
         # Different terrain requirements for different entity types
         if self.type == 'car':
-            # Cars drive on green (mid-level terrain)
-            is_valid = current_depth >= BROWN_GREEN_THRESHOLD and current_depth < GREEN_BLUE_THRESHOLD
+            # Cars drive on brown and green (mid-level terrain)
+            is_valid = current_depth >= WHITE_BROWN_THRESHOLD and current_depth < GREEN_BLUE_THRESHOLD
         else:
             # Fish, whales, mermaids swim in water (blue/far areas)
             is_valid = current_depth >= water_threshold and current_depth < 2047
@@ -165,6 +180,11 @@ class Fish:
                 if np.random.random() < 0.02:
                     self.vx += np.random.uniform(-0.1, 0.1)
                     self.vy += np.random.uniform(-0.1, 0.1)
+            elif self.type == 'dolphin':
+                # Dolphins are fast and agile
+                if np.random.random() < 0.08:
+                    self.vx += np.random.uniform(-0.2, 0.2)
+                    self.vy += np.random.uniform(-0.2, 0.2)
             else:
                 # Fish move erratically
                 if np.random.random() < 0.2:
@@ -179,6 +199,8 @@ class Fish:
                 max_speed = 0.75
             elif self.type == 'car':
                 max_speed = 0.5
+            elif self.type == 'dolphin':
+                max_speed = 0.9  # Fast!
             else:
                 max_speed = 0.625
             
@@ -257,6 +279,43 @@ class Fish:
                 wheel_x = int(self.x + sign * np.cos(angle) * wheel_offset - np.cos(perp_angle) * width / 2)
                 wheel_y = int(self.y + sign * np.sin(angle) * wheel_offset - np.sin(perp_angle) * width / 2)
                 cv2.circle(img, (wheel_x, wheel_y), wheel_size, (0, 0, 0), -1)
+                
+        elif self.type == 'dolphin':
+            # Draw Dolphin: curved body with dorsal fin
+            if self.vx != 0 or self.vy != 0:
+                angle = np.arctan2(self.vy, self.vx)
+            else:
+                angle = 0
+            
+            # Main body (ellipse)
+            axes = (int(self.size * 1.5), int(self.size * 0.8))
+            cv2.ellipse(img, pt1, axes, np.degrees(angle), 0, 360, self.color, -1)
+            
+            # Dorsal fin (small triangle on top)
+            fin_offset_x = int(self.x - np.cos(angle) * self.size * 0.3)
+            fin_offset_y = int(self.y - np.sin(angle) * self.size * 0.3)
+            perp_angle = angle + np.pi / 2
+            fin_tip_x = int(fin_offset_x + np.cos(perp_angle) * self.size * 0.8)
+            fin_tip_y = int(fin_offset_y + np.sin(perp_angle) * self.size * 0.8)
+            fin_base1_x = int(fin_offset_x + np.cos(angle) * self.size * 0.3)
+            fin_base1_y = int(fin_offset_y + np.sin(angle) * self.size * 0.3)
+            fin_base2_x = int(fin_offset_x - np.cos(angle) * self.size * 0.3)
+            fin_base2_y = int(fin_offset_y - np.sin(angle) * self.size * 0.3)
+            
+            fin_pts = np.array([[fin_tip_x, fin_tip_y], [fin_base1_x, fin_base1_y], [fin_base2_x, fin_base2_y]], np.int32)
+            cv2.fillPoly(img, [fin_pts], self.color)
+            
+            # Tail (wider triangle at back)
+            tail_center_x = int(self.x - np.cos(angle) * self.size * 1.2)
+            tail_center_y = int(self.y - np.sin(angle) * self.size * 1.2)
+            tail_width = self.size * 1.0
+            t1_x = int(tail_center_x + np.cos(perp_angle) * tail_width)
+            t1_y = int(tail_center_y + np.sin(perp_angle) * tail_width)
+            t2_x = int(tail_center_x - np.cos(perp_angle) * tail_width)
+            t2_y = int(tail_center_y - np.sin(perp_angle) * tail_width)
+            
+            tail_pts = np.array([[tail_center_x, tail_center_y], [t1_x, t1_y], [t2_x, t2_y]], np.int32)
+            cv2.fillPoly(img, [tail_pts], self.color)
                 
         elif self.type == 'mermaid':
             # Draw Mermaid: Purple head, Green tail
@@ -1079,6 +1138,7 @@ def run_realtime_sandbox():
     print("  Press '1' to spawn a Whale 🐋")
     print("  Press '2' to spawn a Mermaid 🧜‍♀️")
     print("  Press '3' to spawn a Car 🚗")
+    print("  Press '4' to spawn a Dolphin 🐬")
     print(f"  Auto-detected resolution: {display_width}x{display_height}")
     
     if not KINECT_AVAILABLE:
@@ -1105,13 +1165,16 @@ def run_realtime_sandbox():
     # Initialize fishes
     # We need depth dimensions, usually 640x480 for Kinect v1
     # We'll initialize them and they will find water or respawn
-    # Initialize fishes, one whale, one mermaid, and some cars
+    # Initialize fishes, one whale, one mermaid, some cars, and some dolphins
     fishes = [Fish(640, 480, fish_type='fish') for _ in range(15)]
     fishes.append(Fish(640, 480, fish_type='whale'))
     fishes.append(Fish(640, 480, fish_type='mermaid'))
     # Add 3 cars
     for _ in range(3):
         fishes.append(Fish(640, 480, fish_type='car'))
+    # Add 4 dolphins
+    for _ in range(4):
+        fishes.append(Fish(640, 480, fish_type='dolphin'))
 
     try:
         while True:
@@ -1193,12 +1256,14 @@ def run_realtime_sandbox():
                 whale_count = sum(1 for f in fishes if f.type == 'whale')
                 mermaid_count = sum(1 for f in fishes if f.type == 'mermaid')
                 car_count = sum(1 for f in fishes if f.type == 'car')
+                dolphin_count = sum(1 for f in fishes if f.type == 'dolphin')
                 active_fish = sum(1 for f in fishes if f.type == 'fish' and f.active)
                 active_whale = sum(1 for f in fishes if f.type == 'whale' and f.active)
                 active_mermaid = sum(1 for f in fishes if f.type == 'mermaid' and f.active)
                 active_car = sum(1 for f in fishes if f.type == 'car' and f.active)
+                active_dolphin = sum(1 for f in fishes if f.type == 'dolphin' and f.active)
                 
-                creature_text = f"Creatures (Active/Total): Fish:{active_fish}/{fish_count} Whales:{active_whale}/{whale_count} Mermaids:{active_mermaid}/{mermaid_count} Cars:{active_car}/{car_count}"
+                creature_text = f"Creatures (Active/Total): Fish:{active_fish}/{fish_count} Whales:{active_whale}/{whale_count} Mermaids:{active_mermaid}/{mermaid_count} Cars:{active_car}/{car_count} Dolphins:{active_dolphin}/{dolphin_count}"
                 cv2.putText(display_img, creature_text, (10, debug_y_start + 80), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 200), 2)
                 
@@ -1265,6 +1330,9 @@ def run_realtime_sandbox():
             elif key == ord('3'):
                 fishes.append(Fish(640, 480, fish_type='car', immediate=True))
                 print("🚗 Car spawned!")
+            elif key == ord('4'):
+                fishes.append(Fish(640, 480, fish_type='dolphin', immediate=True))
+                print("🐬 Dolphin spawned!")
             
             frame_count += 1
             
